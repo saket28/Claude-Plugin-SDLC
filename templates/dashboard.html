@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDLC</title>
+<style>
+  :root { --bg:#f7f7f5; --panel:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e4e4df; --accent:#3b5bdb;
+          --pass:#2f9e44; --changes:#e8590c; --fail:#c92a2a; --wait:#f08c00; --chip:#f1f1ee; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161615; --panel:#1f1f1d; --ink:#ecece8; --muted:#9a9a93; --line:#33332f; --chip:#2a2a27; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:24px; padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  nav button { background:none; border:0; padding:6px 10px; color:var(--muted); font:inherit; cursor:pointer; border-radius:6px; }
+  nav button.on { color:var(--ink); background:var(--chip); }
+  .meter { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; margin-left:auto; }
+  .bar { width:140px; height:6px; background:var(--chip); border-radius:3px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--accent); }
+  .bar i.warn { background:var(--wait); } .bar i.over { background:var(--fail); }
+  main { padding:16px 20px; }
+  .board { display:grid; grid-template-columns:repeat(7, minmax(150px, 1fr)); gap:10px; }
+  .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 8px; font-weight:600; }
+  .col .count { font-weight:400; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px; cursor:pointer; }
+  .card:hover { border-color:var(--accent); }
+  .card .t { font-weight:500; margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .card .id { color:var(--muted); font-size:12px; }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; margin:6px 0; }
+  .chip { font-size:11px; padding:1px 6px; border-radius:10px; background:var(--chip); color:var(--muted); }
+  .chip.PASS { color:#fff; background:var(--pass); } .chip.CHANGES { color:#fff; background:var(--changes); }
+  .chip.skipped { opacity:.5; text-decoration:line-through; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:4px; background:var(--wait); color:#fff; }
+  .badge.fail { background:var(--fail); }
+  .tok { height:4px; background:var(--chip); border-radius:2px; overflow:hidden; margin-top:6px; }
+  .tok i { display:block; height:100%; background:var(--accent); }
+  .lanes { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+  .lane { border:1px solid var(--line); border-left:4px solid var(--wait); border-radius:8px; padding:10px; background:var(--panel); }
+  .lane.failed { border-left-color:var(--fail); }
+  .lane h3 { margin:0 0 8px; font-size:13px; }
+  .lane .card { margin:0 0 6px; }
+  .backlog li { color:var(--muted); font-size:13px; margin:4px 0; }
+  .muted { color:var(--muted); }
+  #drawer { position:fixed; top:0; right:0; width:min(720px, 100%); height:100%; background:var(--panel); border-left:1px solid var(--line);
+            box-shadow:-8px 0 24px rgba(0,0,0,.08); transform:translateX(100%); transition:transform .15s; overflow:auto; padding:20px; }
+  #drawer.open { transform:none; }
+  #drawer .close { float:right; cursor:pointer; border:0; background:none; font-size:20px; color:var(--muted); }
+  .step { border-left:2px solid var(--line); padding:0 0 14px 14px; position:relative; }
+  .step:before { content:""; position:absolute; left:-6px; top:4px; width:10px; height:10px; border-radius:50%; background:var(--accent); }
+  .step h4 { margin:0; font-size:13px; text-transform:capitalize; }
+  .step .meta { color:var(--muted); font-size:12px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; }
+  .files a { display:inline-block; margin:2px 8px 2px 0; color:var(--accent); cursor:pointer; font-size:13px; }
+  pre.md { white-space:pre-wrap; background:var(--chip); padding:12px; border-radius:6px; font:12px/1.5 ui-monospace, Menlo, monospace; }
+  .settings { max-width:900px; }
+  .group { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:12px; }
+  .group h3 { margin:0 0 10px; font-size:14px; }
+  .field { display:grid; grid-template-columns:220px 1fr; gap:10px; padding:6px 0; align-items:start; }
+  .field label { font-family:ui-monospace, Menlo, monospace; font-size:12px; padding-top:6px; }
+  .field .help { color:var(--muted); font-size:12px; margin-top:3px; }
+  .field input, .field select, .field textarea { width:100%; font:inherit; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); }
+  .field.changed input, .field.changed select, .field.changed textarea { border-color:var(--accent); }
+  .ov { font-size:10px; color:var(--accent); margin-left:6px; }
+  .err { color:var(--fail); font-size:12px; }
+  .actions { position:sticky; bottom:0; background:var(--bg); padding:12px 0; display:flex; gap:8px; align-items:center; }
+  button.primary { background:var(--accent); color:#fff; border:0; padding:7px 14px; border-radius:6px; font:inherit; cursor:pointer; }
+  button.secondary { background:var(--chip); color:var(--ink); border:0; padding:7px 14px; border-radius:6px; font:inherit; cursor:pointer; }
+  .diff { font:12px/1.5 ui-monospace, Menlo, monospace; white-space:pre-wrap; background:var(--chip); padding:10px; border-radius:6px; }
+  .diff .add { color:var(--pass); } .diff .del { color:var(--fail); }
+  .entry { display:flex; gap:8px; align-items:flex-start; padding:4px 0; font-size:13px; }
+  .entry code { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="repo">SDLC</h1>
+  <nav><button id="tab-board" class="on">Board</button><button id="tab-settings">Settings</button></nav>
+  <div class="meter"><span id="month-label">Month</span><div class="bar"><i id="month-bar"></i></div></div>
+</header>
+<main id="board-view">
+  <div class="muted" id="trends" style="margin-bottom:10px"></div>
+  <div class="board" id="board"></div>
+  <div class="lanes" id="lanes"></div>
+</main>
+<main id="settings-view" class="settings" hidden></main>
+<aside id="drawer"><button class="close" onclick="closeDrawer()">×</button><div id="drawer-body"></div></aside>
+<script>
+const TOKEN = new URLSearchParams(location.search).get("token");
+const H = {"X-SDLC-Token": TOKEN, "Content-Type": "application/json"};
+const api = (p, opts={}) => fetch(p, {...opts, headers: H}).then(async r => {
+  const t = r.headers.get("Content-Type") || ""; const body = t.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(body.error || r.statusText); return body; });
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? Math.round(n/1e3)+"k" : String(n||0);
+const dur = s => s == null ? "" : s < 90 ? s+"s" : s < 5400 ? Math.round(s/60)+"m" : (s/3600).toFixed(1)+"h";
+const LABELS = {queued:"Backlog", spec:"Spec", build:"Build", verify:"Verify", review:"Review", merge:"Merge", done:"Done"};
+
+function meter(el, used, limit) {
+  const f = limit ? used/limit : 0; el.style.width = Math.min(100, f*100)+"%";
+  el.className = f >= 1 ? "over" : f >= .8 ? "warn" : "";
+}
+
+function card(j) {
+  const chips = Object.entries(j.reviewers).map(([n,v]) => `<span class="chip ${esc(v)}">${esc(n)}</span>`).join("");
+  const badge = j.gate ? `<span class="badge">${esc(j.gate)} gate</span>` :
+                j.status === "needs-human" ? `<span class="badge">${esc(j.why)}</span>` :
+                j.status === "failed" ? `<span class="badge fail">failed</span>` : "";
+  const f = j.budget ? Math.min(100, j.tokens/j.budget*100) : 0;
+  return `<div class="card" onclick="openJob('${esc(j.id)}')">
+    <div class="id">job-${esc(j.id)}${j.round > 1 ? " · r"+j.round : ""} ${j.stalled ? "· ⏸ stalled?" : ""}</div>
+    <div class="t">${esc(j.title)}</div>
+    ${chips ? `<div class="chips">${chips}</div>` : ""}${badge}
+    <div class="tok" title="${fmt(j.tokens)} of ${fmt(j.budget)} tokens"><i style="width:${f}%"></i></div></div>`;
+}
+
+async function loadBoard() {
+  const b = await api("/api/board");
+  document.getElementById("repo").textContent = b.repo;
+  document.getElementById("month-label").textContent = `Month ${fmt(b.month.tokens)} / ${fmt(b.month.budget)}`;
+  meter(document.getElementById("month-bar"), b.month.tokens, b.month.budget);
+  const t = b.trends;
+  document.getElementById("trends").textContent = t.jobs ?
+    `Last ${t.jobs} done: avg ${fmt(t.avg_tokens)} tokens/job · first-pass ${Math.round(t.first_pass*100)}%` : "";
+  const active = b.jobs.filter(j => !["needs-human","failed","cancelled"].includes(j.status));
+  document.getElementById("board").innerHTML = b.columns.map(c => {
+    const js = active.filter(j => (j.status === "done" ? "done" : j.stage) === c);
+    const extra = c === "queued" ? `<ul class="backlog">${b.backlog.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+    return `<div class="col"><h2>${LABELS[c]} <span class="count">${js.length + (c==="queued"?b.backlog.length:0)}</span></h2>${js.map(card).join("")}${extra}</div>`;
+  }).join("");
+  const nh = b.jobs.filter(j => j.status === "needs-human"), fl = b.jobs.filter(j => j.status === "failed");
+  document.getElementById("lanes").innerHTML =
+    `<div class="lane"><h3>⚠ Needs human (${nh.length})</h3>${nh.map(card).join("") || '<span class="muted">—</span>'}</div>
+     <div class="lane failed"><h3>✖ Failed (${fl.length})</h3>${fl.map(card).join("") || '<span class="muted">—</span>'}</div>`;
+}
+
+async function openJob(id) {
+  const j = await api("/api/job?id="+encodeURIComponent(id));
+  const steps = j.timeline.map(s => `<div class="step"><h4>${esc(s.stage)}</h4>
+    <div class="meta">${dur(s.duration_s)} ${s.tokens ? "· "+fmt(s.tokens)+" tokens" : ""}</div>
+    ${s.agents.map(a => `<div class="meta">${esc(a.agent)}${a.reviewer ? " ("+esc(a.reviewer)+")" : ""} · ${esc(a.model||"")} · ${fmt(a.tokens)} tok${a.cache_read ? " · "+fmt(a.cache_read)+" cached" : ""} · ${dur(a.duration_s)}</div>`).join("")}
+    ${s.verdicts.map(v => `<div class="meta">${esc(v.reviewer||v.step)}: <b>${esc(v.verdict)}</b></div>`).join("")}</div>`).join("");
+  const sel = j.selections.map(s => `<tr><td>${esc(s.step)} r${esc(s.round)}</td><td>${esc(s.reviewer)}</td><td>${s.selected ? "ran" : "skipped"}</td><td class="muted">${esc(s.reason)}</td></tr>`).join("");
+  const blocks = j.blocks.map(e => `<tr><td>${esc(e.type)}</td><td class="muted">${esc(e.detail||e.path||"")}</td></tr>`).join("");
+  document.getElementById("drawer-body").innerHTML = `
+    <h2 style="margin-top:0">job-${esc(j.id)}: ${esc(j.title)}</h2>
+    <div class="muted">${esc(j.status)} · round ${j.round} · ${fmt(j.tokens)} / ${fmt(j.budget)} tokens · ${esc(j.branch)} ${j.pr ? "· <a href='"+esc(j.pr)+"' target=_blank>PR</a>" : ""}</div>
+    ${j.why ? `<p><span class="badge ${j.status==='failed'?'fail':''}">${esc(j.why)}</span> <span class="muted">${esc(j.detail)}</span></p>` : ""}
+    <h3>Timeline</h3>${steps}
+    ${sel ? `<h3>Reviewers</h3><table><tr><th>Step</th><th>Reviewer</th><th></th><th>Why</th></tr>${sel}</table>` : ""}
+    ${blocks ? `<h3>Errors and guardrail blocks</h3><table>${blocks}</table>` : ""}
+    ${j.applied.length ? `<h3>Learnings applied</h3><p>${j.applied.map(esc).join(", ")}</p>` : ""}
+    <h3>Files</h3><div class="files">${j.files.map(f => `<a onclick="openFile('${esc(j.id)}','${esc(f)}')">${esc(f)}</a>`).join("")}</div>
+    <div id="file-view"></div>`;
+  document.getElementById("drawer").classList.add("open");
+}
+async function openFile(job, path) {
+  const t = await api(`/api/file?job=${encodeURIComponent(job)}&path=${encodeURIComponent(path)}`);
+  document.getElementById("file-view").innerHTML = `<h3>${esc(path)}</h3><pre class="md">${esc(t)}</pre>`;
+}
+function closeDrawer() { document.getElementById("drawer").classList.remove("open"); }
+
+/* ---------------- Settings ---------------- */
+let S = null, changes = {};
+const get = (o, p) => p.split(".").reduce((a, k) => a == null ? a : a[k], o);
+const isSet = (o, p) => get(o, p) !== undefined;
+
+function inputFor(f, eff) {
+  const v = get(eff, f.path), id = "f-"+f.path;
+  if (f.type === "enum") {
+    const opts = [...f.options]; if (v != null && !opts.includes(v)) opts.push(v);
+    return `<select id="${id}" data-path="${f.path}" data-type="enum">${opts.map(o => `<option ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
+  }
+  if (f.type === "list") return `<textarea id="${id}" rows="3" data-path="${f.path}" data-type="list" placeholder="one per line">${esc((v||[]).filter(x => !f.additive || !(get(S.defaults, f.path)||[]).includes(x)).join("\n"))}</textarea>`;
+  if (f.type === "gate") return `<input id="${id}" data-path="${f.path}" data-type="gate" value="${esc(typeof v === "object" && v ? "human_when: "+v.human_when : v)}">`;
+  const t = f.type === "int" || f.type === "float" ? "number" : "text";
+  return `<input id="${id}" type="${t}" ${f.type==="float"?'step="0.05"':''} data-path="${f.path}" data-type="${f.type}" value="${esc(v ?? "")}">`;
+}
+
+function parseField(el) {
+  const t = el.dataset.type, v = el.value.trim();
+  if (t === "int") return v === "" ? null : parseInt(v, 10);
+  if (t === "float") return v === "" ? null : parseFloat(v);
+  if (t === "list") return v ? v.split("\n").map(x => x.trim()).filter(Boolean) : null;
+  if (t === "gate") return v.startsWith("human_when:") ? {human_when: v.slice(11).trim()} : v;
+  return v === "" ? null : v;
+}
+
+function validRule(r) {
+  if (!r) return true;
+  return r.split(/\s+or\s+/).every(p => /^(always|never|touches-ui|risk\s*>=\s*(low|medium|high)|paths\s*:\s*\[.+\])$/.test(p.trim()));
+}
+
+async function loadSettings() {
+  S = await api("/api/settings"); changes = {};
+  const groups = S.schema.groups.map(g => `<div class="group"><h3>${esc(g.title)}</h3>${g.fields.map(f => `
+    <div class="field" id="row-${f.path}"><label>${esc(f.path)}${isSet(S.overrides, f.path) ? '<span class="ov">overridden</span>' : ""}</label>
+    <div>${inputFor(f, S.effective)}<div class="help">${esc(f.help)}${f.usage === "month" ? " · used this month: "+fmt(S.usage.month) : ""}${f.additive ? " · built-in: "+esc((get(S.defaults, f.path)||[]).join(", ")) : ""}</div><div class="err" id="err-${f.path}"></div></div></div>`).join("")}</div>`).join("");
+  const rv = Object.entries(S.effective.reviewers).map(([n, r]) => {
+    const kind = r.builtin ? "built-in: /"+r.builtin : r.instructions ? "instructions: "+r.instructions : r.agent ? "agent: "+r.agent : "run: "+r.run;
+    return `<tr><td>${esc(n)}</td><td class="muted">${esc(kind)}</td>
+      <td><input data-rpath="reviewers.${esc(n)}.at" value="${esc(r.at||"review")}" size="7"></td>
+      <td><input data-rpath="reviewers.${esc(n)}.when" value="${esc(r.when||"")}" placeholder="always"></td>
+      <td><input data-rpath="reviewers.${esc(n)}.condition" value="${esc(r.condition||"")}" placeholder="plain-language condition"></td>
+      <td><input type="checkbox" data-rpath="reviewers.${esc(n)}.blocking" ${r.blocking === false ? "" : "checked"}></td></tr>`;
+  }).join("");
+  const entries = (list, actions) => list.length ? list.map(e => `<div class="entry"><code>${esc(e.id)}</code><span>${esc(e.roles.join(", "))} · ${esc(e.text)}</span>${actions ? `<button class="secondary" onclick="learning('accept','${e.id}')">Accept</button><button class="secondary" onclick="learning('reject','${e.id}')">Reject</button>` : ""}</div>`).join("") : '<span class="muted">None</span>';
+  document.getElementById("settings-view").innerHTML = `${groups}
+    <div class="group"><h3>Reviewers</h3><table><tr><th>Name</th><th>Kind</th><th>At</th><th>When</th><th>Condition</th><th>Blocking</th></tr>${rv}</table>
+      <div class="help muted" style="margin-top:6px">Add reviewers in SDLC.md; edit when they run here.</div><div class="err" id="err-reviewers"></div></div>
+    <div class="group"><h3>Pending proposals</h3>${entries(S.pending.Proposals||[], true)}</div>
+    <div class="group"><h3>Pending learnings and answers</h3>${entries([...(S.pending.Learnings||[]), ...(S.pending.Answers||[])], false)}</div>
+    <div class="group"><h3>Learnings in SDLC.md</h3>${entries(S.learnings.Learnings||[], false)}<h3 style="margin-top:12px">Answers in SDLC.md</h3>${entries(S.learnings.Answers||[], false)}</div>
+    <div class="actions"><button class="primary" onclick="preview()">Review changes</button><span class="muted" id="status"></span></div>
+    <div id="diff"></div>`;
+  document.querySelectorAll("[data-path]").forEach(el => el.addEventListener("input", () => {
+    const v = parseField(el), p = el.dataset.path; changes[p] = v;
+    document.getElementById("row-"+p).classList.add("changed");
+    const err = document.getElementById("err-"+p);
+    err.textContent = el.dataset.type === "gate" && typeof v === "object" && !validRule(v.human_when) ? "Not a valid rule" :
+                      el.dataset.type === "gate" && typeof v === "string" && !["auto","human"].includes(v) ? "auto, human, or human_when: <rule>" : "";
+  }));
+  document.querySelectorAll("[data-rpath]").forEach(el => el.addEventListener("input", () => {
+    const p = el.dataset.rpath; const v = el.type === "checkbox" ? el.checked : (el.value.trim() || null);
+    changes[p] = v;
+    document.getElementById("err-reviewers").textContent = p.endsWith(".when") && !validRule(v) ? `${p}: not a valid rule` : "";
+  }));
+}
+
+async function preview() {
+  if (document.querySelector(".err:not(:empty)")) return status("Fix the errors first");
+  if (!Object.keys(changes).length) return status("No changes");
+  try {
+    const r = await api("/api/settings/preview", {method: "POST", body: JSON.stringify({changes})});
+    const a = r.before.split("\n"), b = r.after.split("\n");
+    const lines = b.map(l => a.includes(l) ? esc(l) : `<span class="add">+ ${esc(l)}</span>`)
+      .concat(a.filter(l => !b.includes(l)).map(l => `<span class="del">- ${esc(l)}</span>`));
+    document.getElementById("diff").innerHTML = `<h3>Changes to SDLC.md</h3><div class="diff">${lines.join("\n")}</div>
+      <div class="actions"><button class="primary" onclick="save()">Save</button><button class="secondary" onclick="loadSettings()">Discard</button></div>`;
+  } catch (e) { status(e.message); }
+}
+async function save() {
+  try {
+    await api("/api/settings", {method: "POST", body: JSON.stringify({changes, hash: S.hash})});
+    await loadSettings(); status("Saved. SDLC.md has uncommitted changes: commit them when you're ready.");
+  } catch (e) { status(e.message); if (e.message.includes("changed on disk")) setTimeout(loadSettings, 1500); }
+}
+async function learning(action, id) {
+  try { await api("/api/learnings", {method: "POST", body: JSON.stringify({action, ids: [id]})}); await loadSettings(); }
+  catch (e) { status(e.message); }
+}
+function status(t) { document.getElementById("status").textContent = t; }
+
+/* ---------------- Tabs ---------------- */
+function show(tab) {
+  document.getElementById("board-view").hidden = tab !== "board";
+  document.getElementById("settings-view").hidden = tab !== "settings";
+  document.getElementById("tab-board").classList.toggle("on", tab === "board");
+  document.getElementById("tab-settings").classList.toggle("on", tab === "settings");
+  if (tab === "settings") loadSettings();
+}
+document.getElementById("tab-board").onclick = () => show("board");
+document.getElementById("tab-settings").onclick = () => show("settings");
+loadBoard().catch(e => document.getElementById("board").textContent = e.message);
+setInterval(() => { if (!document.getElementById("board-view").hidden) loadBoard().catch(() => {}); }, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "groups": [
+    {"title": "Commands", "fields": [
+      {"path": "commands.setup", "type": "string", "help": "Run once when a job's worktree is created, e.g. npm ci"},
+      {"path": "commands.lint", "type": "string", "help": "Lint command run by verify"},
+      {"path": "commands.build", "type": "string", "help": "Build command run by verify"},
+      {"path": "commands.test", "type": "string", "help": "Test command run by verify and by the tester"},
+      {"path": "test_paths", "type": "list", "help": "Globs the tester may write to"}
+    ]},
+    {"title": "Branches and folders", "fields": [
+      {"path": "base_branch", "type": "string", "help": "Branch jobs start from and merge into"},
+      {"path": "branch_prefix", "type": "string", "help": "Prefix for job branches, e.g. sdlc/ gives sdlc/job-12"},
+      {"path": "work_dir", "type": "string", "help": "Local state folder (always gitignored)"},
+      {"path": "worktree_dir", "type": "string", "help": "Where job checkouts go; default is a sibling folder of the repo"}
+    ]},
+    {"title": "Gates and rounds", "fields": [
+      {"path": "gates.spec", "type": "gate", "help": "Does a human approve the spec before building? auto, human, or {human_when: <rule>}"},
+      {"path": "gates.merge", "type": "gate", "help": "Does a human approve the merge? With GitHub this is the PR's approval"},
+      {"path": "max_rounds", "type": "int", "min": 0, "help": "Automatic rework rounds before the job needs a human"}
+    ]},
+    {"title": "Models", "fields": [
+      {"path": "models.spec-writer", "type": "enum", "options": ["opus", "sonnet", "haiku", "fable", "inherit"], "help": "Model for the spec-writer"},
+      {"path": "models.builder", "type": "enum", "options": ["opus", "sonnet", "haiku", "fable", "inherit"], "help": "Model for the builder"},
+      {"path": "models.tester", "type": "enum", "options": ["opus", "sonnet", "haiku", "fable", "inherit"], "help": "Model for the tester"},
+      {"path": "models.reviewer", "type": "enum", "options": ["opus", "sonnet", "haiku", "fable", "inherit"], "help": "Model for instruction-based reviewers"},
+      {"path": "models.judge", "type": "enum", "options": ["haiku", "sonnet", "opus"], "help": "Cheap model for judging reviewer conditions and writing retro learnings"}
+    ]},
+    {"title": "Budgets (tokens)", "fields": [
+      {"path": "budgets.per_job", "type": "int", "min": 0, "usage": "job", "help": "Most tokens one job may use"},
+      {"path": "budgets.per_month", "type": "int", "min": 0, "usage": "month", "help": "Most tokens all jobs may use this month"},
+      {"path": "budgets.per_stage.spec", "type": "int", "min": 0, "help": "Cap for the spec stage"},
+      {"path": "budgets.per_stage.build", "type": "int", "min": 0, "help": "Cap for building, across rounds"},
+      {"path": "budgets.per_stage.verify", "type": "int", "min": 0, "help": "Cap for verify and the tester"},
+      {"path": "budgets.per_stage.review", "type": "int", "min": 0, "help": "Cap for reviews"},
+      {"path": "budgets.per_stage.merge", "type": "int", "min": 0, "help": "Cap for merge-step reviewers"},
+      {"path": "budgets.per_stage.orchestrate", "type": "int", "min": 0, "help": "Cap for the orchestrating session itself"},
+      {"path": "budgets.on_exceed", "type": "enum", "options": ["escalate", "warn"], "help": "What happens when a budget is reached"},
+      {"path": "budgets.warn_at", "type": "float", "min": 0, "max": 1, "help": "Fraction of a budget that triggers a warning"}
+    ]},
+    {"title": "Integrations", "fields": [
+      {"path": "host.adapter", "type": "enum", "options": ["local", "github"], "allow_custom": true, "help": "Where code lands: local git, GitHub (via gh), or a repo command adapter path"},
+      {"path": "board.adapter", "type": "enum", "options": ["files"], "allow_custom": true, "help": "Where jobs live: local files, or a repo command adapter path"},
+      {"path": "notify", "type": "string", "help": "Name of a userConfig secret holding a webhook for alerts (the secret itself is never shown)", "secret_ref": true}
+    ]},
+    {"title": "Learning", "fields": [
+      {"path": "learning", "type": "enum", "options": ["auto", "propose", "off"], "help": "auto applies new learnings; propose waits for approval; off disables the retro"}
+    ]},
+    {"title": "Guardrails", "fields": [
+      {"path": "protected_paths", "type": "list", "additive": true, "help": "Extra paths agents may never change (added to the built-in list)"},
+      {"path": "blocked_commands", "type": "list", "additive": true, "help": "Extra shell commands agents may not run (added to the built-in list)"}
+    ]}
+  ],
+  "reviewer_fields": [
+    {"key": "kind", "type": "enum", "options": ["instructions", "agent", "run"], "help": "Instructions file, project subagent, or shell command"},
+    {"key": "at", "type": "enum", "options": ["spec", "review", "merge"], "help": "Which step it runs at"},
+    {"key": "when", "type": "rule", "help": "always | never | touches-ui | risk>=low|medium|high | paths:[globs], joined with 'or'"},
+    {"key": "condition", "type": "string", "help": "Plain-language condition judged per job, e.g. 'changes a public API'"},
+    {"key": "blocking", "type": "bool", "help": "If off, findings are recorded but never block"}
+  ]
+}

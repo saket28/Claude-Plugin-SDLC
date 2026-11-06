@@ -1,0 +1,12 @@
+schema_version: "1.1"
+name: status-check
+description: /sdlc:status --check runs the health check through the skill.
+runs: 2
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: haiku
+  max_turns: 6
+  timeout_seconds: 180
+  allowed_tools: [Skill, Read]
+  prompt: "/sdlc:status --check"
