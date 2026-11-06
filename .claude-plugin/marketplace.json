@@ -1,0 +1,19 @@
+{
+  "name": "sdlc-marketplace",
+  "owner": {
+    "name": "Saket Porwal"
+  },
+  "plugins": [
+    {
+      "name": "sdlc",
+      "source": "./",
+      "description": "Runs features through spec, build, verify, review and merge with token budgets, guardrails and a retro that improves every run.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Saket Porwal"
+      },
+      "license": "MIT",
+      "keywords": ["sdlc", "workflow", "review", "ci", "agents"]
+    }
+  ]
+}
