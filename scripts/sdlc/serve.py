@@ -8,6 +8,7 @@ learnings-pending.md, and only through configedit / learn.
 import datetime as dt
 import http.server
 import json
+import re
 import secrets
 import socketserver
 import urllib.parse
@@ -25,6 +26,68 @@ def _ts(s):
         return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
     except (AttributeError, ValueError):
         return None
+
+
+EXPLAIN = {
+    "max-rounds": "The builder and reviewers went back and forth the maximum number of automatic rounds and "
+                  "the reviewers still have blocking findings. Decide whether the remaining findings matter.",
+    "budget": "The job hit its token budget. Raise the budget to continue, or send it back with new direction.",
+    "spec-max": "The spec reviewers still object after the maximum number of spec revisions.",
+    "rules": "A merge rule (see config) is not satisfied, so the job cannot merge by itself.",
+    "disputed": "The reviewers and the tests disagree, so a person has to break the tie.",
+    "adapter": "A git, PR or CI step failed in a way the pipeline could not recover from.",
+    "setup": "The setup command failed, so the worktree is not ready.",
+}
+
+
+def _findings(folder):
+    """Open review findings of one round: [{reviewer, verdict, severity, title, why}]."""
+    out = []
+    for f in sorted(folder.glob("review-*.md")):
+        front, body = runners.read_artifact(f)
+        if not front or not body:
+            continue
+        reviewer, sev, item = f.stem[len("review-"):], "", None
+        for line in body.splitlines():
+            m = re.match(r"##\s+(.*)", line)
+            if m:
+                sev, item = m.group(1).strip(), None
+                continue
+            m = re.match(r"\d+\.\s+(.*)", line)
+            if m and sev:
+                item = {"reviewer": reviewer, "verdict": front.get("verdict"), "severity": sev,
+                        "title": m.group(1).strip(), "why": ""}
+                out.append(item)
+            elif item and line.startswith((" ", "\t")) and not item["why"]:
+                item["why"] = line.strip()
+    return out
+
+
+def help_for(p, st, status, gate, detail):
+    """What a person must do for this job, in plain words, plus the exact commands."""
+    j = p.job_id
+    if status == "needs-human":
+        reason = (st.needs_human or {}).get("reason", "")
+        approve, rework = f"/sdlc:approve {j} ", f'/sdlc:rework {j} "what to change"'
+        acts = {"budget": [approve + "budget +500k   (raise the budget)", rework],
+                "spec-max": [approve + "spec   (accept the spec as it is)", rework],
+                "max-rounds": [approve + "override   (merge despite the open findings)",
+                               rework + "   (send back with your own direction)"],
+                "rules": [approve + "override", rework],
+                "disputed": [approve + "override", rework],
+                "adapter": [approve + "retry"]}.get(reason, [f"/sdlc:status {j}"])
+        return {"title": f"Needs a decision: {reason}", "explain": EXPLAIN.get(reason, ""),
+                "history": (st.needs_human or {}).get("detail", ""), "actions": acts}
+    if gate:
+        cmd = f"/sdlc:approve {j} {gate}"
+        return {"title": f"Waiting for your approval: {gate} gate",
+                "explain": ("Read the spec and approve it, or send it back." if gate == "spec" else
+                            "Review the branch or PR and approve it to merge."),
+                "history": "", "actions": [cmd, f'/sdlc:rework {j} "what to change"']}
+    if status == "failed":
+        return {"title": "Failed", "explain": (st.failed or {}).get("reason", ""), "history": "",
+                "actions": [f"/sdlc:start {j}   (retry)"]}
+    return None
 
 
 def job_summary(cfg, meta, detail=False):
@@ -55,7 +118,10 @@ def job_summary(cfg, meta, detail=False):
            "round": st.round, "tokens": total, "budget": cfg["budgets"]["per_job"] + st.budget_extra,
            "reviewers": reviewers, "gate": waiting, "stalled": stalled,
            "why": (st.needs_human or {}).get("reason") or (st.failed or {}).get("reason"),
-           "detail": (st.needs_human or {}).get("detail", ""), "updated": last.isoformat() if last else None}
+           "detail": (st.needs_human or {}).get("detail", ""), "updated": last.isoformat() if last else None,
+           "help": help_for(p, st, status, waiting, "")}
+    if out["help"] and detail:
+        out["help"]["findings"] = _findings(folder)
     if detail:
         out.update(source=meta.get("source"), created=meta.get("created"), owner=meta.get("owner"),
                    branch=meta["branch"], pr=meta.get("pr"), by_stage=by_stage,

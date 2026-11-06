@@ -44,6 +44,13 @@
   .chip.PASS { color:#fff; background:var(--pass); } .chip.CHANGES { color:#fff; background:var(--changes); }
   .chip.skipped { opacity:.5; text-decoration:line-through; }
   .badge { font-size:11px; padding:1px 6px; border-radius:4px; background:var(--wait); color:#fff; }
+  .card .why { font-size:12px; color:var(--muted); margin-top:6px; }
+  .helpbox { border:1px solid var(--wait); border-left-width:4px; border-radius:6px; padding:10px 12px; margin:12px 0; }
+  .helpbox.fail { border-color:var(--fail); }
+  .helpbox h3 { margin:0 0 4px; }
+  .helpbox code { display:block; margin:4px 0; user-select:all; cursor:copy; }
+  .finding { margin:8px 0; }
+  .finding .sev { font-size:11px; text-transform:uppercase; color:var(--muted); }
   .badge.fail { background:var(--fail); }
   .tok { height:4px; background:var(--chip); border-radius:2px; overflow:hidden; margin-top:6px; }
   .tok i { display:block; height:100%; background:var(--accent); }
@@ -156,6 +163,7 @@ function card(j) {
     <div class="id">job-${esc(j.id)}${j.round > 1 ? " · r"+j.round : ""} ${j.stalled ? "· ⏸ stalled?" : ""}</div>
     <div class="t">${esc(j.title)}</div>
     ${chips ? `<div class="chips">${chips}</div>` : ""}${badge}
+    ${j.help && j.help.explain ? `<div class="why">${esc(j.help.explain)}</div>` : ""}
     <div class="tok" title="${fmt(j.tokens)} of ${fmt(j.budget)} tokens"><i style="width:${f}%"></i></div></div>`;
 }
 
@@ -181,6 +189,19 @@ async function loadBoard() {
      <div class="lane failed"><h3>✖ Failed (${fl.length})</h3>${fl.map(card).join("") || '<span class="muted">—</span>'}</div>`;
 }
 
+function helpBox(j) {
+  const h = j.help;
+  if (!h) return "";
+  const fs = (h.findings || []).filter(f => !/^nit/i.test(f.severity));
+  const nits = (h.findings || []).length - fs.length;
+  return `<div class="helpbox ${j.status === "failed" ? "fail" : ""}"><h3>${esc(h.title)}</h3>
+    ${h.explain ? `<p>${esc(h.explain)}</p>` : ""}
+    ${h.history ? `<div class="muted">History: ${esc(h.history)}</div>` : ""}
+    ${fs.length ? `<h4>Open findings (${fs.length}${nits ? ", +" + nits + " nit" + (nits > 1 ? "s" : "") : ""})</h4>` +
+      fs.map(f => `<div class="finding"><span class="sev">${esc(f.reviewer)} · ${esc(f.severity)}</span><div>${esc(f.title)}</div>${f.why ? `<div class="muted">${esc(f.why)}</div>` : ""}</div>`).join("") : ""}
+    <h4>What you can do (click to select, then paste into Claude Code)</h4>
+    ${h.actions.map(a => `<code>${esc(a)}</code>`).join("")}</div>`;
+}
 async function openJob(id) {
   const j = await api("/api/job?id="+encodeURIComponent(id));
   const steps = j.timeline.map(s => `<div class="step"><h4>${esc(s.stage)}</h4>
@@ -192,7 +213,7 @@ async function openJob(id) {
   document.getElementById("drawer-body").innerHTML = `
     <h2 style="margin-top:0">job-${esc(j.id)}: ${esc(j.title)}</h2>
     <div class="muted">${esc(j.status)} · round ${j.round} · ${fmt(j.tokens)} / ${fmt(j.budget)} tokens · ${esc(j.branch)} ${j.pr ? "· <a href='"+esc(j.pr)+"' target=_blank>PR</a>" : ""}</div>
-    ${j.why ? `<p><span class="badge ${j.status==='failed'?'fail':''}">${esc(j.why)}</span> <span class="muted">${esc(j.detail)}</span></p>` : ""}
+    ${helpBox(j)}
     ${j.source ? `<h3>Request</h3><pre class="md">${esc(j.source)}</pre>` : ""}
     <div class="muted">Created ${esc(j.created ? new Date(j.created).toLocaleString() : "")}${j.owner ? " by " + esc(j.owner) : ""}</div>
     <h3>Timeline</h3>${steps}

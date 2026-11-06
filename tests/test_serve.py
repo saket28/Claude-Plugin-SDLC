@@ -107,5 +107,19 @@ class ServeTest(unittest.TestCase):
         self.assertEqual(code, 403)
 
 
+class FindingsTest(unittest.TestCase):
+    def test_open_findings_parsed_from_reviews(self):
+        import tempfile
+        from pathlib import Path
+        d = Path(tempfile.mkdtemp())
+        (d / "review-code.md").write_text(
+            "---\nverdict: CHANGES\n---\n\n# Review: code\n\n## Important\n"
+            "1. `a.py:1` Bad redirect.\n   Tabs bypass the regex.\n2. `b.py:2` Second.\n\n## Nit\n1. Tiny.\n")
+        fs = serve._findings(d)
+        self.assertEqual([f["severity"] for f in fs], ["Important", "Important", "Nit"])
+        self.assertEqual(fs[0]["why"], "Tabs bypass the regex.")
+        shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     unittest.main()
