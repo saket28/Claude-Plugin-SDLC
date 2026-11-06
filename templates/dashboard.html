@@ -78,7 +78,7 @@
 <body>
 <header>
   <h1 id="repo">SDLC</h1>
-  <nav><button id="tab-board" class="on">Board</button><button id="tab-settings">Settings</button></nav>
+  <nav><button id="tab-board" class="on">Board</button><button id="tab-settings">Settings</button><button id="tab-help">Help</button></nav>
   <div class="meter"><span id="month-label">Month</span><div class="bar"><i id="month-bar"></i></div></div>
 </header>
 <main id="board-view">
@@ -87,6 +87,7 @@
   <div class="lanes" id="lanes"></div>
 </main>
 <main id="settings-view" class="settings" hidden></main>
+<main id="help-view" hidden><pre id="help-text" style="white-space:pre-wrap;font:13px/1.5 ui-monospace,monospace;max-width:900px"></pre></main>
 <aside id="drawer"><button class="close" onclick="closeDrawer()">×</button><div id="drawer-body"></div></aside>
 <script>
 const TOKEN = new URLSearchParams(location.search).get("token");
@@ -210,7 +211,7 @@ async function loadSettings() {
   const entries = (list, actions) => list.length ? list.map(e => `<div class="entry"><code>${esc(e.id)}</code><span>${esc(e.roles.join(", "))} · ${esc(e.text)}</span>${actions ? `<button class="secondary" onclick="learning('accept','${e.id}')">Accept</button><button class="secondary" onclick="learning('reject','${e.id}')">Reject</button>` : ""}</div>`).join("") : '<span class="muted">None</span>';
   document.getElementById("settings-view").innerHTML = `${groups}
     <div class="group"><h3>Reviewers</h3><table><tr><th>Name</th><th>Kind</th><th>At</th><th>When</th><th>Condition</th><th>Blocking</th></tr>${rv}</table>
-      <div class="help muted" style="margin-top:6px">Add reviewers in SDLC.md; edit when they run here.</div><div class="err" id="err-reviewers"></div></div>
+      <div class="help muted" style="margin-top:6px">Add reviewers with /sdlc:reviewer (see the Help tab); edit when they run here.</div><div class="err" id="err-reviewers"></div></div>
     <div class="group"><h3>Pending proposals</h3>${entries(S.pending.Proposals||[], true)}</div>
     <div class="group"><h3>Pending learnings and answers</h3>${entries([...(S.pending.Learnings||[]), ...(S.pending.Answers||[])], false)}</div>
     <div class="group"><h3>Learnings in SDLC.md</h3>${entries(S.learnings.Learnings||[], false)}<h3 style="margin-top:12px">Answers in SDLC.md</h3>${entries(S.learnings.Answers||[], false)}</div>
@@ -258,12 +259,22 @@ function status(t) { document.getElementById("status").textContent = t; }
 function show(tab) {
   document.getElementById("board-view").hidden = tab !== "board";
   document.getElementById("settings-view").hidden = tab !== "settings";
+  document.getElementById("help-view").hidden = tab !== "help";
+  document.getElementById("tab-help").classList.toggle("on", tab === "help");
   document.getElementById("tab-board").classList.toggle("on", tab === "board");
   document.getElementById("tab-settings").classList.toggle("on", tab === "settings");
   if (tab === "settings") loadSettings();
+  if (tab === "help") loadHelp();
 }
 document.getElementById("tab-board").onclick = () => show("board");
 document.getElementById("tab-settings").onclick = () => show("settings");
+document.getElementById("tab-help").onclick = () => show("help");
+async function loadHelp() {
+  const el = document.getElementById("help-text");
+  if (el.textContent) return;
+  const r = await fetch("/api/help", {headers: {"X-SDLC-Token": TOKEN}});
+  el.textContent = await r.text();
+}
 loadBoard().catch(e => document.getElementById("board").textContent = e.message);
 setInterval(() => { if (!document.getElementById("board-view").hidden) loadBoard().catch(() => {}); }, 4000);
 </script>

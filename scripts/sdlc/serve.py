@@ -165,6 +165,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, f.read_text(errors="replace"), "text/plain")
         if u.path == "/api/settings":
             return self._send(200, settings(cfg))
+        if u.path == "/api/help":
+            return self._send(200, (PLUGIN_ROOT / "reference" / "help.md").read_text(), "text/plain")
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):

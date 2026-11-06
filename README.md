@@ -24,6 +24,13 @@ Status: **v0.1, in development.** See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the
 | `/sdlc:approve <id> <gate>` | Pass a gate: `spec`, `merge`, `budget +500k`, `override`, `retry`; or `learnings` |
 | `/sdlc:rework <id> "<feedback>"` | Send a job back to the builder with your feedback |
 | `/sdlc:cancel <id>` | Cancel a job, keeping its record |
+| `/sdlc:reviewer [name]` | Add a reviewer (instructions file, subagent or command) through a guided flow |
+| `/sdlc:dashboard` | Open the local dashboard (board, timelines, tokens, settings, help) |
+| `/sdlc:help [topic]` | Explain commands, flow, reviewers and config (`commands`, `flow`, `reviewers`, `config`) |
+
+## Adding a reviewer
+
+Run `/sdlc:reviewer`, or add an entry under `reviewers:` in `SDLC.md` by hand. Each uses exactly one kind: `instructions: review-x.md` (a markdown file saying what to check; starter in `templates/review-template.md`), `agent: name` (a `.claude/agents/name.md` subagent), or `run: "<command>"` (exit 0 = pass, no tokens). Trigger it with `at` (`spec`, `review`, `merge`), `when` (`risk>=medium`, `touches-ui`, `paths:[src/auth/**]`) and/or a plain-language `condition`; `blocking: false` makes it advisory. Details and examples: `/sdlc:help reviewers` or [reference/help.md](reference/help.md).
 
 ## Configuration
 
