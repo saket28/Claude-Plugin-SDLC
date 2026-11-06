@@ -49,6 +49,9 @@
   .helpbox.fail { border-color:var(--fail); }
   .helpbox h3 { margin:0 0 4px; }
   .helpbox code { display:block; margin:4px 0; user-select:all; cursor:copy; }
+  details.round { border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin:8px 0; }
+  details.round summary { cursor:pointer; font-weight:600; }
+  .rev { margin:6px 0; }
   .finding { margin:8px 0; }
   .finding .sev { font-size:11px; text-transform:uppercase; color:var(--muted); }
   .badge.fail { background:var(--fail); }
@@ -202,6 +205,18 @@ function helpBox(j) {
     <h4>What you can do (click to select, then paste into Claude Code)</h4>
     ${h.actions.map(a => `<code>${esc(a)}</code>`).join("")}</div>`;
 }
+function roundsHtml(j) {
+  if (!j.rounds.length) return "";
+  return `<h3>Rounds: what happened and why</h3>` + j.rounds.map(r => {
+    const vs = Object.entries(r.verdicts).map(([k,v]) => `${esc(k)}: <b>${esc(v)}</b>`).join(" · ");
+    const revs = r.reviews.map(v => `<div class="rev"><b>${esc(v.reviewer)}</b>: <b>${esc(v.verdict)}</b>
+      ${v.findings.map(f => `<div class="finding"><span class="sev">${esc(f.severity)}</span><div>${esc(f.title)}</div>${f.why ? `<div class="muted">${esc(f.why)}</div>` : ""}</div>`).join("")}</div>`).join("");
+    return `<details class="round" ${r.n === j.round ? "open" : ""}><summary>Round ${r.n} ${r.n > 1 ? "· started because: " + esc(r.started) : ""}
+      <span class="muted">${vs}${r.reviews.length ? " · " + r.reviews.map(v => esc(v.reviewer) + " " + esc(v.verdict) + " (" + v.findings.filter(f => !/^nit/i.test(f.severity)).length + ")").join(", ") : ""}</span></summary>
+      ${r.build ? `<h4>What the builder did</h4><pre class="md">${esc(r.build)}</pre>` : ""}
+      ${revs ? `<h4>Reviews</h4>${revs}` : ""}</details>`;
+  }).join("");
+}
 async function openJob(id) {
   const j = await api("/api/job?id="+encodeURIComponent(id));
   const steps = j.timeline.map(s => `<div class="step"><h4>${esc(s.stage)}</h4>
@@ -216,6 +231,7 @@ async function openJob(id) {
     ${helpBox(j)}
     ${j.source ? `<h3>Request</h3><pre class="md">${esc(j.source)}</pre>` : ""}
     <div class="muted">Created ${esc(j.created ? new Date(j.created).toLocaleString() : "")}${j.owner ? " by " + esc(j.owner) : ""}</div>
+    ${roundsHtml(j)}
     <h3>Timeline</h3>${steps}
     ${sel ? `<h3>Reviewers</h3><table><tr><th>Step</th><th>Reviewer</th><th></th><th>Why</th></tr>${sel}</table>` : ""}
     ${blocks ? `<h3>Errors and guardrail blocks</h3><table>${blocks}</table>` : ""}

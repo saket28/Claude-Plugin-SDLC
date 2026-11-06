@@ -63,6 +63,28 @@ def _findings(folder):
     return out
 
 
+def _rounds(p, events):
+    """Per round: why it started, what the builder did, verify/test verdicts, and every review."""
+    why = {e["n"]: e.get("reason") for e in events if e["type"] == "round"}
+    out = []
+    for d in sorted(p.dir.glob("round-*"), key=lambda x: int(x.name.split("-")[1])):
+        n = int(d.name.split("-")[1])
+        r = {"n": n, "started": why.get(n, ""), "build": "", "verdicts": {}, "reviews": []}
+        _, body = runners.read_artifact(d / "build.md")
+        r["build"] = (body or "").strip()[:1500]
+        for step in ("verify", "test"):
+            front, _ = runners.read_artifact(d / f"{step}.md")
+            if front:
+                r["verdicts"][step] = front.get("verdict", "")
+        for f in sorted(d.glob("review-*.md")):
+            front, _ = runners.read_artifact(f)
+            name = f.stem[len("review-"):]
+            r["reviews"].append({"reviewer": name, "verdict": (front or {}).get("verdict", ""),
+                                 "findings": [x for x in _findings(d) if x["reviewer"] == name]})
+        out.append(r)
+    return out
+
+
 def help_for(p, st, status, gate, detail):
     """What a person must do for this job, in plain words, plus the exact commands."""
     j = p.job_id
@@ -125,7 +147,7 @@ def job_summary(cfg, meta, detail=False):
     if detail:
         out.update(source=meta.get("source"), created=meta.get("created"), owner=meta.get("owner"),
                    branch=meta["branch"], pr=meta.get("pr"), by_stage=by_stage,
-                   timeline=timeline(events, by_stage), overrides=st.overrides,
+                   rounds=_rounds(p, events), timeline=timeline(events, by_stage), overrides=st.overrides,
                    files=sorted(str(f.relative_to(p.dir)) for f in p.dir.rglob("*.md")
                                 if "briefs" not in f.parts),
                    blocks=[e for e in events if e["type"] in ("guardrail_block", "error", "retry")][-20:],
