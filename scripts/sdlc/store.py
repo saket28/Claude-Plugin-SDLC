@@ -8,9 +8,11 @@ the usage ledger keeps totals even after a job folder is deleted.
 import contextlib
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 
 
@@ -164,38 +166,105 @@ class Store:
         return sum(latest.values())
 
     # ---- backlog ------------------------------------------------------------
+    # backlog.md stays human-editable. One item is a checkbox line followed by
+    # optional indented lines: "  @key: value" metadata, anything else is the
+    # description. Plain "- [ ] title" lines (the old format) still work.
     def backlog_path(self):
         return self.dir / "backlog.md"
 
-    def backlog(self):
+    def _backlog_parse(self):
+        """Return (lines, items); each item has its line span [start, end)."""
         p = self.backlog_path()
-        if not p.exists():
-            return []
-        return [m.group(1).strip() for line in p.read_text().splitlines()
-                if (m := re.match(r"^\s*-\s*\[ \]\s+(.*)$", line))]
+        lines = p.read_text().splitlines() if p.exists() else []
+        items, cur = [], None
+        for i, line in enumerate(lines):
+            m = re.match(r"^\s*-\s*\[ \]\s+(.*)$", line)
+            if m:
+                cur = {"title": m.group(1).strip(), "start": i, "end": i + 1,
+                       "meta": {}, "desc": []}
+                items.append(cur)
+            elif cur and (line.startswith("  ") or not line.strip()):
+                cur["end"] = i + 1
+                mm = re.match(r"^\s+@(\w+):\s*(.*)$", line)
+                if mm:
+                    cur["meta"][mm.group(1)] = mm.group(2).strip()
+                else:
+                    cur["desc"].append(line[2:] if line.startswith("  ") else "")
+            else:
+                cur = None
+        for it in items:
+            it["description"] = "\n".join(it.pop("desc")).strip()
+            it["id"] = it["meta"].get("id") or "b" + hashlib.sha1(it["title"].encode()).hexdigest()[:6]
+        return lines, items
 
-    def add_backlog(self, text):
+    @staticmethod
+    def _backlog_render(title, description="", meta=None):
+        out = [f"- [ ] {' '.join(title.split())}"]
+        out += [f"  @{k}: {' '.join(str(v).split())}" for k, v in (meta or {}).items() if v]
+        out += [("  " + l) if l.strip() else "" for l in description.strip().splitlines()]
+        return out
+
+    def backlog(self):
+        return [it["title"] for it in self._backlog_parse()[1]]
+
+    def backlog_items(self):
+        return [{"id": it["id"], "title": it["title"], "description": it["description"],
+                 "priority": it["meta"].get("priority", ""), "created": it["meta"].get("created", "")}
+                for it in self._backlog_parse()[1]]
+
+    def add_backlog(self, text, description="", priority=""):
         p = self.backlog_path()
         with locked(p):
             cur = p.read_text() if p.exists() else "# Backlog\n\n"
             if not cur.endswith("\n"):
                 cur += "\n"
-            write_atomic(p, cur + f"- [ ] {text.strip()}\n")
+            meta = {"id": "b" + secrets.token_hex(3), "created": now(), "priority": priority}
+            lines = self._backlog_render(text, description, meta)
+            write_atomic(p, cur + "\n".join(lines) + "\n")
+            return meta["id"]
 
-    def pop_backlog(self, text=None):
-        """Remove and return the first unchecked item (or the matching one)."""
+    def update_backlog(self, item_id, title=None, description=None, priority=None):
         p = self.backlog_path()
         with locked(p):
-            if not p.exists():
-                return None
-            lines = p.read_text().splitlines()
-            for i, line in enumerate(lines):
-                m = re.match(r"^\s*-\s*\[ \]\s+(.*)$", line)
-                if m and (text is None or m.group(1).strip() == text.strip()):
-                    del lines[i]
+            lines, items = self._backlog_parse()
+            it = next((x for x in items if x["id"] == item_id), None)
+            if not it:
+                raise KeyError(f"no backlog item {item_id}")
+            meta = dict(it["meta"])
+            meta["id"] = item_id
+            if priority is not None:
+                meta["priority"] = priority
+            new = self._backlog_render(title if title and title.strip() else it["title"],
+                                       it["description"] if description is None else description, meta)
+            lines[it["start"]:it["end"]] = new
+            write_atomic(p, "\n".join(lines) + "\n")
+
+    def delete_backlog(self, item_id):
+        p = self.backlog_path()
+        with locked(p):
+            lines, items = self._backlog_parse()
+            it = next((x for x in items if x["id"] == item_id), None)
+            if not it:
+                raise KeyError(f"no backlog item {item_id}")
+            del lines[it["start"]:it["end"]]
+            write_atomic(p, "\n".join(lines) + "\n")
+
+    def pop_backlog_item(self, text=None):
+        """Remove and return the first item (or the one whose title matches)."""
+        p = self.backlog_path()
+        with locked(p):
+            lines, items = self._backlog_parse()
+            for it in items:
+                if text is None or it["title"] == text.strip():
+                    del lines[it["start"]:it["end"]]
                     write_atomic(p, "\n".join(lines) + "\n")
-                    return m.group(1).strip()
+                    return it
         return None
+
+    def pop_backlog(self, text=None):
+        """Remove and return the title of the first unchecked item (or the matching one)."""
+        it = self.pop_backlog_item(text)
+        return it["title"] if it else None
 
 
 def _job_sort_key(p):

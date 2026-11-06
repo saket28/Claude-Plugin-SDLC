@@ -113,12 +113,12 @@ def cmd_start(a):
         learn.sync_pending(cfg)
     except Exception:  # noqa: BLE001 - never block starting a job on learnings bookkeeping
         pass
-    text = arg or st.pop_backlog()
+    item = st.pop_backlog_item(arg or None)
+    text = arg or (item or {}).get("title")
     if not text:
         return out({"error": "the backlog is empty; give a feature description or /sdlc:intake one"})
-    if arg:
-        st.pop_backlog(arg)
-    meta = st.create_job(text)
+    desc = (item or {}).get("description")
+    meta = st.create_job(text, source=f"{text}\n\n{desc}" if desc else None)
     out({"job": meta["id"], "created": True, "branch": meta["branch"]})
 
 

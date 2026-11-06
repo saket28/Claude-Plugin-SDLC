@@ -58,6 +58,25 @@ class ServeTest(unittest.TestCase):
         code, t = self.req(f"/api/file?job={self.job}&path=spec.md")
         self.assertIn("revision", t)
 
+    def test_backlog_card_crud(self):
+        st = Store(self.cfg)
+        st.add_backlog("Legacy one-liner")
+        code, r = self.req("/api/backlog", {"action": "add", "title": "Add CSV export",
+                                            "description": "Line one\n\nLine three", "priority": "high"})
+        self.assertEqual(code, 200, r)
+        items = self.req("/api/board")[1]["backlog_items"]
+        it = next(i for i in items if i["id"] == r["id"])
+        self.assertEqual((it["description"], it["priority"]), ("Line one\n\nLine three", "high"))
+        self.assertIn("Legacy one-liner", [i["title"] for i in items])
+        self.assertEqual(self.req("/api/backlog", {"action": "update", "id": r["id"], "title": "CSV",
+                                                   "description": "new"})[0], 200)
+        it = next(i for i in st.backlog_items() if i["id"] == r["id"])
+        self.assertEqual((it["title"], it["description"], it["priority"]), ("CSV", "new", "high"))
+        self.assertEqual(self.req("/api/backlog", {"action": "add", "title": " "})[0], 400)
+        self.assertEqual(self.req("/api/backlog", {"action": "delete", "id": "nope"})[0], 400)
+        self.assertEqual(st.pop_backlog_item("CSV")["description"], "new")
+        self.assertEqual(st.pop_backlog(), "Legacy one-liner")
+
     def test_help(self):
         code, t = self.req("/api/help")
         self.assertEqual(code, 200)

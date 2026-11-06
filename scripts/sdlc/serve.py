@@ -57,7 +57,8 @@ def job_summary(cfg, meta, detail=False):
            "why": (st.needs_human or {}).get("reason") or (st.failed or {}).get("reason"),
            "detail": (st.needs_human or {}).get("detail", ""), "updated": last.isoformat() if last else None}
     if detail:
-        out.update(branch=meta["branch"], pr=meta.get("pr"), by_stage=by_stage,
+        out.update(source=meta.get("source"), created=meta.get("created"), owner=meta.get("owner"),
+                   branch=meta["branch"], pr=meta.get("pr"), by_stage=by_stage,
                    timeline=timeline(events, by_stage), overrides=st.overrides,
                    files=sorted(str(f.relative_to(p.dir)) for f in p.dir.rglob("*.md")
                                 if "briefs" not in f.parts),
@@ -104,7 +105,7 @@ def board(cfg):
     trends = {"jobs": len(done),
               "avg_tokens": int(sum(j["tokens"] for j in done) / len(done)) if done else 0,
               "first_pass": round(sum(1 for j in done if j["round"] <= 1) / len(done), 2) if done else None}
-    return {"columns": COLUMNS, "jobs": jobs, "backlog": st.backlog(),
+    return {"columns": COLUMNS, "jobs": jobs, "backlog": st.backlog(), "backlog_items": st.backlog_items(),
             "month": {"tokens": st.month_tokens(), "budget": cfg["budgets"]["per_month"]},
             "trends": trends, "repo": cfg.root.name}
 
@@ -192,11 +193,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/settings":
                 h = configedit.save(cfg, req.get("changes", {}), req.get("hash"))
                 return self._send(200, {"saved": True, "hash": h})
+            if u.path == "/api/backlog":
+                return self._send(200, backlog_action(cfg, req))
             if u.path == "/api/learnings":
                 return self._send(200, learnings_action(cfg, req))
-        except (configedit.EditError, config_mod.ConfigError, ValueError) as e:
+        except (configedit.EditError, config_mod.ConfigError, ValueError, KeyError) as e:
             return self._send(400, {"error": str(e)})
         return self._send(404, {"error": "not found"})
+
+
+def backlog_action(cfg, req):
+    st, action = Store(cfg), req.get("action")
+    pri = req.get("priority")
+    if pri not in (None, "", "low", "medium", "high"):
+        raise ValueError("priority must be low, medium or high")
+    if action == "add":
+        if not (req.get("title") or "").strip():
+            raise ValueError("title is required")
+        return {"id": st.add_backlog(req["title"], req.get("description") or "", pri or "")}
+    if action == "update":
+        st.update_backlog(req.get("id"), req.get("title"), req.get("description"), pri)
+        return {"saved": True}
+    if action == "delete":
+        st.delete_backlog(req.get("id"))
+        return {"deleted": True}
+    raise ValueError("action must be add, update or delete")
 
 
 def learnings_action(cfg, req):

@@ -22,9 +22,20 @@
   .bar i.warn { background:var(--wait); } .bar i.over { background:var(--fail); }
   main { padding:16px 20px; }
   .board { display:grid; grid-template-columns:repeat(7, minmax(150px, 1fr)); gap:10px; }
-  .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 8px; font-weight:600; }
+  .col { background:var(--chip); border-radius:10px; padding:8px; align-self:start; min-height:120px; }
+  .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:2px 4px 8px; font-weight:600; }
   .col .count { font-weight:400; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px; cursor:pointer; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  .card.bl { border-left:3px solid var(--line); }
+  .card.bl.high { border-left-color:var(--fail); } .card.bl.medium { border-left-color:var(--wait); } .card.bl.low { border-left-color:var(--pass); }
+  .card .d { color:var(--muted); font-size:12px; margin-top:4px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .addcard { width:100%; text-align:left; background:none; border:0; color:var(--muted); padding:6px 4px; font:inherit; cursor:pointer; border-radius:6px; }
+  .addcard:hover { background:var(--line); color:var(--ink); }
+  .form label { display:block; font-size:12px; color:var(--muted); margin:12px 0 4px; }
+  .form input, .form textarea, .form select { width:100%; font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); }
+  .form textarea { min-height:160px; resize:vertical; }
+  .form .actions { position:static; background:none; }
+  button.danger { background:none; color:var(--fail); border:0; padding:7px 10px; font:inherit; cursor:pointer; margin-left:auto; }
   .card:hover { border-color:var(--accent); }
   .card .t { font-weight:500; margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
   .card .id { color:var(--muted); font-size:12px; }
@@ -41,7 +52,6 @@
   .lane.failed { border-left-color:var(--fail); }
   .lane h3 { margin:0 0 8px; font-size:13px; }
   .lane .card { margin:0 0 6px; }
-  .backlog li { color:var(--muted); font-size:13px; margin:4px 0; }
   .muted { color:var(--muted); }
   #drawer { position:fixed; top:0; right:0; width:min(720px, 100%); height:100%; background:var(--panel); border-left:1px solid var(--line);
             box-shadow:-8px 0 24px rgba(0,0,0,.08); transform:translateX(100%); transition:transform .15s; overflow:auto; padding:20px; }
@@ -105,6 +115,37 @@ function meter(el, used, limit) {
   el.className = f >= 1 ? "over" : f >= .8 ? "warn" : "";
 }
 
+let BACKLOG = [];
+function blCard(x) {
+  return `<div class="card bl ${esc(x.priority)}" onclick="openBacklog('${esc(x.id)}')">
+    <div class="id">${esc(x.id)}${x.priority ? " · " + esc(x.priority) : ""}</div>
+    <div class="t">${esc(x.title)}</div>
+    ${x.description ? `<div class="d">${esc(x.description)}</div>` : ""}</div>`;
+}
+function openBacklog(id) {
+  const x = BACKLOG.find(i => i.id === id) || {title:"", description:"", priority:"", created:""};
+  const opt = v => `<option value="${v}" ${x.priority===v?"selected":""}>${v||"none"}</option>`;
+  document.getElementById("drawer-body").innerHTML = `<div class="form">
+    <h2 style="margin-top:0">${id ? "Backlog item " + esc(id) : "New backlog item"}</h2>
+    ${x.created ? `<div class="muted">Added ${esc(new Date(x.created).toLocaleString())} · not started. Run <code>/sdlc:start ${esc(x.title)}</code> to begin.</div>` : ""}
+    <label>Title</label><input id="bl-title" value="${esc(x.title)}">
+    <label>Description</label><textarea id="bl-desc" placeholder="What should be built? Acceptance criteria, links, constraints...">${esc(x.description)}</textarea>
+    <label>Priority</label><select id="bl-pri">${["","low","medium","high"].map(opt).join("")}</select>
+    <div class="actions"><button class="primary" onclick="saveBacklog('${esc(id||"")}')">Save</button>
+      <button class="secondary" onclick="closeDrawer()">Cancel</button>
+      ${id ? `<button class="danger" onclick="delBacklog('${esc(id)}')">Delete</button>` : ""}</div>
+    <div class="err" id="bl-err"></div></div>`;
+  document.getElementById("drawer").classList.add("open");
+}
+async function postBacklog(body) {
+  try { await api("/api/backlog", {method:"POST", body: JSON.stringify(body)}); closeDrawer(); loadBoard(); }
+  catch (e) { document.getElementById("bl-err").textContent = e.message; }
+}
+const saveBacklog = id => postBacklog({action: id ? "update" : "add", id,
+  title: document.getElementById("bl-title").value, description: document.getElementById("bl-desc").value,
+  priority: document.getElementById("bl-pri").value});
+const delBacklog = id => confirm("Delete this backlog item?") && postBacklog({action:"delete", id});
+
 function card(j) {
   const chips = Object.entries(j.reviewers).map(([n,v]) => `<span class="chip ${esc(v)}">${esc(n)}</span>`).join("");
   const badge = j.gate ? `<span class="badge">${esc(j.gate)} gate</span>` :
@@ -129,8 +170,10 @@ async function loadBoard() {
   const active = b.jobs.filter(j => !["needs-human","failed","cancelled"].includes(j.status));
   document.getElementById("board").innerHTML = b.columns.map(c => {
     const js = active.filter(j => (j.status === "done" ? "done" : j.stage) === c);
-    const extra = c === "queued" ? `<ul class="backlog">${b.backlog.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
-    return `<div class="col"><h2>${LABELS[c]} <span class="count">${js.length + (c==="queued"?b.backlog.length:0)}</span></h2>${js.map(card).join("")}${extra}</div>`;
+    const q = c === "queued";
+    const extra = q ? b.backlog_items.map(blCard).join("") + `<button class="addcard" onclick="openBacklog()">+ Add a card</button>` : "";
+    BACKLOG = b.backlog_items;
+    return `<div class="col"><h2>${LABELS[c]} <span class="count">${js.length + (q?b.backlog_items.length:0)}</span></h2>${js.map(card).join("")}${extra}</div>`;
   }).join("");
   const nh = b.jobs.filter(j => j.status === "needs-human"), fl = b.jobs.filter(j => j.status === "failed");
   document.getElementById("lanes").innerHTML =
@@ -150,6 +193,8 @@ async function openJob(id) {
     <h2 style="margin-top:0">job-${esc(j.id)}: ${esc(j.title)}</h2>
     <div class="muted">${esc(j.status)} · round ${j.round} · ${fmt(j.tokens)} / ${fmt(j.budget)} tokens · ${esc(j.branch)} ${j.pr ? "· <a href='"+esc(j.pr)+"' target=_blank>PR</a>" : ""}</div>
     ${j.why ? `<p><span class="badge ${j.status==='failed'?'fail':''}">${esc(j.why)}</span> <span class="muted">${esc(j.detail)}</span></p>` : ""}
+    ${j.source ? `<h3>Request</h3><pre class="md">${esc(j.source)}</pre>` : ""}
+    <div class="muted">Created ${esc(j.created ? new Date(j.created).toLocaleString() : "")}${j.owner ? " by " + esc(j.owner) : ""}</div>
     <h3>Timeline</h3>${steps}
     ${sel ? `<h3>Reviewers</h3><table><tr><th>Step</th><th>Reviewer</th><th></th><th>Why</th></tr>${sel}</table>` : ""}
     ${blocks ? `<h3>Errors and guardrail blocks</h3><table>${blocks}</table>` : ""}
