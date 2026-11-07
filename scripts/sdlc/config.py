@@ -21,7 +21,8 @@ DEFAULTS = {
     "board": {"adapter": "files"},
     "host": {"adapter": None},       # computed: github if remote + gh, else local
     "gates": {"spec": "auto", "merge": "human"},
-    "max_rounds": 2,
+    "max_rounds": 3,                 # total builds per job, the first one included
+    "merge_strategy": "squash",      # squash | merge | rebase; the branch is always rebased onto base first
     "models": {"spec-writer": "opus", "builder": "opus", "tester": "sonnet", "reviewer": "sonnet",
                "judge": "haiku"},
     "reviewers": {
@@ -37,10 +38,10 @@ DEFAULTS = {
         "warn_at": 0.8,
     },
     "learning": "auto",
-    "protected_paths": ["SDLC.md", "REVIEW.md", "review-*.md", "CLAUDE.md", ".github/workflows/**"],
+    "protected_paths": ["SDLC.md", "REVIEW.md", "review-*.md", "CLAUDE.md", ".github/workflows/**",
+                        ".claude/reviewers/**", ".claude/agents/**"],
     "blocked_commands": ["git push --force", "git push -f", "git reset --hard",
                         "git push origin {base}", "git checkout {base}", "git switch {base}"],
-    "notify": None,
 }
 
 REVIEWER_KINDS = ("builtin", "instructions", "agent", "run")
@@ -88,7 +89,10 @@ def merge_reviewers(defaults, over):
 
 
 class Config:
-    def __init__(self, root, data, body, raw):
+    def __init__(self, root, data, body, raw, warnings=None, lenient=False):
+        self.warnings = list(warnings or [])
+        self.problems = []           # reviewer files that could not be used: [{name, file, error}]
+        self.lenient = lenient       # the dashboard opens even when a reviewer file is missing
         self.root = Path(root)
         self.data = data
         self.body = body
@@ -134,13 +138,22 @@ def detect_host(root):
     return "github" if "github.com" in url and which("gh") else "local"
 
 
-def load(root=None):
+def resolve_reviewers(root, raw):
+    """Reviewers from SDLC.md's `reviewers:`. A list of paths = file-backed reviewers (exactly those,
+    built-ins included only if listed); a map or nothing = the built-ins plus inline entries."""
+    if isinstance(raw, list):
+        from . import reviewers
+        return reviewers.load_list(root, raw)
+    return merge_reviewers(DEFAULTS["reviewers"], raw), [], []
+
+
+def load(root=None, lenient=False):
     root = Path(root) if root else main_checkout()
     path = root / "SDLC.md"
     text = path.read_text() if path.exists() else ""
     raw, body = yamlish.parse_frontmatter(text)
     data = deep_merge(DEFAULTS, {k: v for k, v in raw.items() if k != "reviewers"})
-    data["reviewers"] = merge_reviewers(DEFAULTS["reviewers"], raw.get("reviewers"))
+    data["reviewers"], warnings, problems = resolve_reviewers(root, raw.get("reviewers"))
     # Safety lists only ever grow: a repo's entries are added to the defaults, never replace them.
     for key in ("protected_paths", "blocked_commands"):
         extra = raw.get(key) or []
@@ -149,17 +162,20 @@ def load(root=None):
         data[key] = list(dict.fromkeys(DEFAULTS[key] + extra))
     if not data["host"].get("adapter"):
         data["host"]["adapter"] = detect_host(root)
-    cfg = Config(root, data, body, raw)
+    cfg = Config(root, data, body, raw, warnings, lenient)
+    cfg.problems = problems
     validate(cfg)
     return cfg
 
 
-def validate(cfg):
+def validate(cfg, assume_files=()):
     from . import rules
     errs = []
     d = cfg.data
-    if not isinstance(d["max_rounds"], int) or d["max_rounds"] < 0:
-        errs.append("max_rounds must be a non-negative integer")
+    if not isinstance(d["max_rounds"], int) or d["max_rounds"] < 1:
+        errs.append("max_rounds must be an integer of at least 1 (total rounds, the first build included)")
+    if d["merge_strategy"] not in ("squash", "merge", "rebase"):
+        errs.append("merge_strategy must be squash, merge or rebase")
     for gate in ("spec", "merge"):
         g = d["gates"].get(gate)
         if isinstance(g, dict):
@@ -178,16 +194,23 @@ def validate(cfg):
             errs.append(f"reviewers.{name}: needs exactly one of instructions, agent or run")
         if r.get("at", "review") not in STEPS:
             errs.append(f"reviewers.{name}.at must be one of {', '.join(STEPS)}")
+        if r.get("model") not in (None, "opus", "sonnet", "haiku", "fable", "inherit"):
+            errs.append(f"reviewers.{name}.model must be opus, sonnet, haiku, fable or inherit")
         if "when" in r:
             try:
                 rules.parse(r["when"])
             except rules.RuleError as e:
                 errs.append(f"reviewers.{name}.when: {e}")
-        if "instructions" in r and not (cfg.root / r["instructions"]).exists():
-            errs.append(f"reviewers.{name}: instructions file {r['instructions']} not found")
+        if "instructions" in r and r["instructions"] not in assume_files and not (cfg.root / r["instructions"]).exists():
+            msg = f"reviewers.{name}: instructions file {r['instructions']} not found"
+            if cfg.lenient:
+                cfg.warnings.append(msg)
+                cfg.problems.append({"name": name, "file": r["instructions"], "error": "file not found"})
+            else:
+                errs.append(msg)
     if d["budgets"].get("on_exceed") not in ("warn", "escalate"):
         errs.append("budgets.on_exceed must be warn or escalate")
-    if d["learning"] not in ("auto", "propose", "off"):
-        errs.append("learning must be auto, propose or off")
+    if d["learning"] not in ("auto", "off"):
+        errs.append("learning must be auto or off")
     if errs:
         raise ConfigError("SDLC.md is invalid:\n  - " + "\n  - ".join(errs))

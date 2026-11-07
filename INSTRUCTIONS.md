@@ -20,7 +20,7 @@ Build a Claude Code **plugin** named `sdlc` that takes a feature from idea to me
 **Plugin repo (this repo)**
 
 ```text
-.claude-plugin/plugin.json    # name "sdlc", version, userConfig (secrets only)
+.claude-plugin/plugin.json    # name "sdlc", version
 skills/<command>/SKILL.md     # one per command, invoked as /sdlc:<command>
 agents/                       # spec-writer, builder, tester, reviewer (generic, runs repo instructions)
 hooks/hooks.json              # 4 hooks (§8)
@@ -49,7 +49,6 @@ evals/
 │   ├── tools/sdlc/*              # committed, optional: the repo's command adapters (§6), any path
 │   └── .sdlc/                    # gitignored; /sdlc:init adds it to .gitignore
 │       ├── backlog.md            # items not started yet; an item leaves the backlog when its job starts
-│       ├── learnings-pending.md  # learnings and proposals not yet in SDLC.md (§7)
 │       ├── counter               # last job number used (files board only), so numbers are never reused
 │       ├── config-events.jsonl   # settings changes made in the Settings UI (E1)
 │       ├── usage/
@@ -63,18 +62,17 @@ evals/
 │           └── round-1/          # build.md  verify.md  test.md  review-code.md  review-security.md …
 │       └── release-v1.9.0/       # E3: one self-contained folder per release
 └── shop.sdlc-worktrees/          # worktree_dir: outside the repo, created on first job
-    ├── job-123/                  # job 123's code checkout, on branch sdlc/job-123
-    └── learnings/                # checkout for your rolling learnings PR, on branch sdlc/learnings-<user>
+    └── job-123/                  # job 123's code checkout, on branch sdlc/job-123
 ```
 
 A job has two folders with the same name: **`shop/.sdlc/job-123/` is its record** (what the board reads), and **`shop.sdlc-worktrees/job-123/` is its code** (where the builder and tester work). The code sits outside the repo so the repo's own test runners, linters and type checkers never scan it. The record points to the code through `job.json`. Deleting the record orphans the code checkout, which `status --check` offers to remove (§4). Deleting the checkout just makes `start` recreate it from the branch.
 
 - Skills call the script as `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py …`. Claude Code fills in `${CLAUDE_PLUGIN_ROOT}` in skill content, but it is not set in the Bash environment. `sdlc.py` uses only the Python standard library. Split it into modules if it grows.
-- Secrets (the notification webhook, tracker tokens) go in `userConfig` with `sensitive: true`, or in the environment the repo's adapter already uses (for example `gh` or an MCP server's own sign-in). `SDLC.md` never holds a secret.
+- Secrets (tracker tokens) go in `userConfig` with `sensitive: true`, or in the environment the repo's adapter already uses (for example `gh` or an MCP server's own sign-in). `SDLC.md` never holds a secret.
 
 ## 2. `SDLC.md`
 
-YAML frontmatter holds the settings. The markdown body holds **pipeline** rules, plus the Answers and Learnings written by the retro. Coding conventions belong in `CLAUDE.md`, and review rules for the built-in code review belong in `REVIEW.md`. Every agent's brief includes `SDLC.md` and the pending learnings (§4), and they override the plugin's defaults.
+YAML frontmatter holds the settings. The markdown body holds **pipeline** rules, plus the Answers and Learnings written by the retro. Coding conventions belong in `CLAUDE.md`, and review rules for the built-in code review belong in `REVIEW.md`. Every agent's brief includes `SDLC.md` (§4), and they override the plugin's defaults.
 
 `/sdlc:init` writes only the values that differ from the defaults, so a typical file is short:
 
@@ -92,7 +90,7 @@ reviewers:
     at: spec
     instructions: review-architecture.md
     condition: "Adds a service or data store, or changes a public API contract"
-  a11y: { instructions: review-a11y.md, when: touches-ui }
+  a11y: { instructions: .claude/reviewers/a11y.md, when: touches-ui }
   licenses: { run: "npx license-checker --failOn GPL", at: merge, when: "paths:[package.json]" }
 budgets: { per_job: 1500000 }
 ---
@@ -121,15 +119,15 @@ The frontmatter uses a restricted YAML subset (scalars, lists, maps, inline `{}`
 | `host` | `github` with a GitHub remote and `gh` available, otherwise `local` | Where code lands: `local`, `github`, or a repo adapter, with optional `ops` (§6) |
 | `gates.spec` | `auto` | `auto`, `human`, or `{ human_when: <rule> }`. Becomes `human` whenever the spec has open questions |
 | `gates.merge` | `human` | Same values. With a host adapter that has PRs, "human" means the PR's own approval |
-| `max_rounds` | `2` | Automatic rework rounds before needs-human (§4) |
+| `max_rounds` | `3` | Total rounds per job, the first build included (minimum 1); then needs-human (§4) |
+| `merge_strategy` | `squash` | How a job lands on `base_branch`: `squash`, `merge` or `rebase`. The branch is rebased onto base and re-verified first (local); on GitHub it maps to `gh pr merge --squash/--merge/--rebase` |
 | `models.<agent>` | see §4 | Model per agent |
 | `reviewers.<name>` | `code` and `security` (§5) | Built-in and repo-defined reviewers |
 | `budgets.per_job/per_month/per_stage` | 2M / 50M / see schema | Token limits (§7) |
 | `budgets.on_exceed` | `escalate` | `warn` or `escalate` |
-| `learning` | `auto` | `auto`, `propose` or `off` (§7) |
-| `protected_paths` | `SDLC.md`, `REVIEW.md`, `review-*.md`, `CLAUDE.md`, `.github/workflows/**` | Agents never write these |
+| `learning` | `auto` | `auto` or `off` (§7) |
+| `protected_paths` | `SDLC.md`, `REVIEW.md`, `review-*.md`, `CLAUDE.md`, `.github/workflows/**`, `.claude/reviewers/**`, `.claude/agents/**` | Agents never write these |
 | `blocked_commands` | force-push, `reset --hard`, push to base | Bash commands agents may not run |
-| `notify` | none | `userConfig` name of a webhook for needs-human, budget and failure alerts |
 
 **Rules (`when`, `human_when`)** take one of these forms, combined with `or`:
 
@@ -148,7 +146,7 @@ The frontmatter uses a restricted YAML subset (scalars, lists, maps, inline `{}`
 | `/sdlc:intake <text>` | Adds an item to the backlog. |
 | `/sdlc:start [id \| text]` | With no argument, starts the next backlog item. With an ID, starts the job or continues it from its first incomplete stage, which also retries a `failed` job. |
 | `/sdlc:status [id] [--check]` | Board summary, or one job's detail including running agents and stalls. `--check` runs the health check: config and adapters valid, commands run, hooks active, plus stalled jobs, and worktrees or branches whose job folder is gone (with an offer to clean them up). |
-| `/sdlc:approve <id> <gate> [value]` | Passes a job's gate: `spec`, `merge` (local host) or `budget +500k`. At needs-human, it accepts the stopped step and moves on (§4). `/sdlc:approve learnings [id…]` accepts pending learning proposals, all or the listed ones. |
+| `/sdlc:approve <id> <gate> [value]` | Passes a job's gate: `spec`, `merge` (local host) or `budget +500k`. At needs-human, it accepts the stopped step and moves on (§4). |
 | `/sdlc:rework <id> "<feedback>"` | Sends a job back to the builder with feedback, as a new round that doesn't count toward `max_rounds`. |
 | `/sdlc:cancel <id>` | Stops a job and removes its worktree, keeping its folder and branch. |
 | `/sdlc:dashboard` | Starts the local dashboard and prints its URL. |
@@ -180,7 +178,7 @@ To keep token use low, everything that doesn't need judgment is done by `sdlc.py
 
 `reference/pipeline.md` only describes this loop. Skills inject live state with `!`-commands (for example `` !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py status` ``), so reading state doesn't cost a tool call. **Waiting costs nothing.** Every wait is a background script that exits only when there's something to do, and the exit notifies the session: `sdlc.py wait` for CI and gate approvals (including approvals given on a ticket), and `sdlc.py check --watch` for monitoring (E3). Nothing polls in a loop that costs tokens, and nothing re-invokes Claude on a timer.
 
-**Briefs.** `sdlc.py` writes each agent's full brief to `job-<n>/briefs/<stage>-r<round>.md`, in cache-friendly order: the pipeline rules and Answers from `SDLC.md`, then the Learnings (committed and pending) tagged for the agent's role, then the spec, then what changed this round. The settings frontmatter is left out, because agents don't need it. The prompt the orchestrator sends is a single line: `SDLC-JOB: <n> STAGE: <stage> ROUND: <r>. Read <brief path> first.` The orchestrator never copies files into prompts. Agents never read `SDLC.md` from their worktree, because that copy may be out of date.
+**Briefs.** `sdlc.py` writes each agent's full brief to `job-<n>/briefs/<stage>-r<round>.md`, in cache-friendly order: the pipeline rules and Answers from `SDLC.md`, then the Learnings tagged for the agent's role, then the spec, then what changed this round. The settings frontmatter is left out, because agents don't need it. The prompt the orchestrator sends is a single line: `SDLC-JOB: <n> STAGE: <stage> ROUND: <r>. Read <brief path> first.` The orchestrator never copies files into prompts. Agents never read `SDLC.md` from their worktree, because that copy may be out of date.
 
 ### Flow
 
@@ -219,7 +217,7 @@ There are seven stages (`queued`, `spec`, `build`, `verify`, `review`, `merge`, 
 
 `.sdlc/job-<n>/` is the **complete record** of a job, and the board reads everything about a job from it.
 
-- **`job.json`** holds identity and pointers: ID, title, source text, created time, branch, worktree path, PR link, owner, and the orchestrator's `session_id` while it is actively working on the job. When the job waits, pauses or ends, `sdlc.py` marks the link as closing. The next `Stop` hook records the orchestrator's final usage and then removes it, so later unrelated work in that session isn't charged to the job. Only `sdlc.py` writes this file; hooks ask `sdlc.py` to change it. `sdlc.py` takes a file lock for every shared file in `.sdlc/` (`counter`, `learnings-pending.md`, the usage ledger), so parallel sessions never race.
+- **`job.json`** holds identity and pointers: ID, title, source text, created time, branch, worktree path, PR link, owner, and the orchestrator's `session_id` while it is actively working on the job. When the job waits, pauses or ends, `sdlc.py` marks the link as closing. The next `Stop` hook records the orchestrator's final usage and then removes it, so later unrelated work in that session isn't charged to the job. Only `sdlc.py` writes this file; hooks ask `sdlc.py` to change it. `sdlc.py` takes a file lock for every shared file in `.sdlc/` (`counter`, the usage ledger), so parallel sessions never race.
 - **`events.jsonl`** holds everything that happened, including usage. The job's stage, round, verdicts, gates, budgets and timeline are all computed from it.
 - The **artifacts** sit next to these two files, and the dashboard links to them with relative paths inside the folder.
 
@@ -260,7 +258,7 @@ Every override is recorded in `decision.md` (`override: true`, with who approved
 
 ### Rules
 
-- **Rounds.** A round is one run of the builder (`round-1`, `round-2` …). A CHANGES or FAIL from verify, review or merge starts the next round. Separately, a blocking CHANGES from a spec reviewer sends the spec back to the spec-writer for a spec revision. Up to `max_rounds` automatic rounds after the first, and as many spec revisions, are allowed; then the job goes to needs-human. Rounds started by `/sdlc:rework` don't count.
+- **Rounds.** A round is one run of the builder (`round-1`, `round-2` …). A CHANGES or FAIL from verify, review or merge starts the next round. Separately, a blocking CHANGES from a spec reviewer sends the spec back to the spec-writer for a spec revision. `max_rounds` is the total number of rounds, the first build included (default 3: the first build plus up to 2 automatic reworks), and the same number of spec drafts; then the job goes to needs-human. Rounds started by `/sdlc:rework` don't count.
 - **WAIT FOR ALL.** A step's reviews finish only when every selected reviewer's file exists. In later rounds, only reviewers who returned CHANGES run again, plus `code` if it is enabled.
 - **Disputes.** The builder can answer a finding or a test as **disputed (reason)**. In the next round the reviewer or tester sees the dispute and either withdraws the finding or keeps it. A finding still disputed after that sends the job to needs-human.
 - **Adapter errors.** A failed adapter operation is retried once. If it fails again, the job goes to needs-human with the tool's error message.
@@ -315,6 +313,12 @@ The plugin ships **two built-in reviewers**, both Claude Code's own. **Every oth
 
 `sdlc.py review` runs both headless in the worktree: `SDLC_NESTED=1 claude -p "<command>" --append-system-prompt "<REVIEW.md>" --disallowedTools Edit Write NotebookEdit --output-format json`. It converts the result into `review-<name>.md` and records the usage it reports. Only if the output can't be parsed does it hand the conversion to the orchestrator. `SDLC_NESTED=1` makes the plugin's hooks inside the nested session do nothing, so its tokens aren't counted twice. A repo can change a built-in reviewer's `when`, `effort` or `at`, or turn it off with `when: never`.
 
+### Reviewers as files
+
+Reviewers live in files, one per reviewer, in `.claude/reviewers/<name>.md`. The file's frontmatter holds all of its settings: `at`, `when`, `condition`, `blocking`, `model`, `effort`, `timeout`, and at most one of `builtin` (`code-review` or `security-review`), `agent` (name of a `.claude/agents/<name>.md` subagent) or `run` (a command). With none of those, the file is an **instructions** reviewer and its body is the instructions. For a built-in, text in the body outside `<!-- -->` comments is appended to the review as extra instructions, on top of `REVIEW.md` (which applies to both built-ins). The reviewer's name is its file name. `SDLC.md` lists the files: `reviewers: [.claude/reviewers/code.md, ...]`, and exactly those run, so the built-ins are reviewers only if listed. `init` creates `code.md` and `security.md` and lists them. A listed file that is missing or unreadable is a warning (shown in `status --check` and the dashboard), not a crash. `reviewers:` written as a map (inline entries, or only tweaks to the built-ins) still works, and `sdlc.py reviewers convert` or the dashboard's "Convert to files" button turns it into files.
+
+The rest of this section describes the three kinds, whichever way they are configured.
+
 ### Repo-defined reviewers
 
 Each entry under `reviewers` uses exactly one of three kinds:
@@ -336,7 +340,7 @@ Shared fields:
 | `model`, `effort` | agent default | Per-reviewer overrides |
 
 - **Selection.** A reviewer runs at its step when its `when` rule matches (checked by `sdlc.py`) **or** its `condition` is judged true (all of a step's conditions in one `judge` action). With neither set, it always runs. The selected reviewers for each step are listed in the step's events, so the dashboard shows why each one ran.
-- **Instruction files** are best kept at the repo root (`review-*.md`). That way `REVIEW.md` can include them (`@review-a11y.md`), and the managed Code Review service applies the same rules on PRs.
+- **Instruction files** live in `.claude/reviewers/<name>.md` by default (any repo path works), and subagent reviewers in `.claude/agents/<name>.md`. Both folders are protected paths, so a builder cannot weaken its own reviewer. `REVIEW.md` can include an instructions file (`@.claude/reviewers/a11y.md`).
 - **Output.** Every reviewer, built-in or repo-defined, writes the same frontmatter (`verdict`, `important`, `nit`). Severities follow Code Review's names: **Important** blocks the job (if the reviewer is blocking), **Nit** is recorded only, and pre-existing issues are ignored.
 
 ## 6. Adapters (board and host)
@@ -427,21 +431,11 @@ Trends are computed across the job folders that exist, so deleting jobs removes 
 
 Every 10th retro also looks at the metric trends, for example "the a11y reviewer found nothing in 12 jobs; narrow its `condition`".
 
-Retro output:
-
-| Output | Goes to | Applied |
-|---|---|---|
-| Answers and Learnings | `learnings-pending.md`, which takes effect from the next agent spawn | per `learning` (`auto` applies; `propose` waits at the `learnings` gate) |
-| Changes to settings, reviewers, `REVIEW.md`, `review-*.md` or `CLAUDE.md` | proposals in `learnings-pending.md` | always waits for `/sdlc:approve learnings`. A proposal that adds or changes a command shows the full command. |
-
-**How pending learnings reach `SDLC.md`**
-- Host adapter with PRs: each person has one rolling PR on branch `sdlc/learnings-<user>`, in its own worktree, updated after each of their retros. Once it's merged, entries whose IDs now appear in `SDLC.md` are removed from the pending file the next time a job starts.
-- `local` host: `git commit SDLC.md` straight away, committing only that file, but only when the main checkout is on `base_branch` and `SDLC.md` has no uncommitted edits. Otherwise the entries stay pending.
+Retro output: Answers and Learnings are written straight into `SDLC.md` and take effect from the next agent spawn. There is no pending file, proposal or approval step. With `learning: off` the retro does nothing. The retro never commits: the edit stays in the working tree for you to review and commit. Review learnings like any other change to `SDLC.md`: edit or delete a line you disagree with.
 
 Retro rules:
 - Merge duplicates.
 - IDs are short hashes of the entry's text **when it is first created** (`L-9c1e`, `A-3fa2`), and never change afterwards, even when the text is edited or merged. People working in parallel never produce the same ID.
-- After a learnings PR is merged or closed, any entry that didn't make it into `SDLC.md` is marked rejected in the pending file, so it isn't proposed again.
 - Every entry needs evidence: a job number plus a short description, as plain text so it never depends on the job folder.
 - Write each entry as an instruction an agent can follow, tagged with the roles it applies to.
 - Keep at most 50 Learnings by merging or removing the oldest, since git history keeps them. Answers aren't capped.
@@ -452,7 +446,7 @@ Retro rules:
 Hooks find the active job by matching their `session_id` against the `job.json` files. They do nothing when `SDLC_NESTED=1` is set or no job is active.
 
 - **Hooks are the first line of defence, not the only one.** The write hook can't see files changed through Bash. The merge rule check (§4) catches any change to protected paths in the diff, and `init` offers to turn on Claude Code's Bash sandbox, which limits where Bash can write.
-- **Commands come only from the main checkout.** `sdlc.py` reads `run` reviewers, adapter commands, verify commands and deploy commands from the main checkout's `SDLC.md`, never from a job branch or worktree. A change to any of them goes through a human: a PR review, or the learnings gate.
+- **Commands come only from the main checkout.** `sdlc.py` reads `run` reviewers, adapter commands, verify commands and deploy commands from the main checkout's `SDLC.md`, never from a job branch or worktree. A change to any of them goes through a human: a PR review.
 
 | Hook | Does |
 |---|---|
@@ -470,11 +464,11 @@ Hooks find the active job by matching their `session_id` against the `job.json` 
 │ ▢ item  │      │ ▢ 124 │        │        │       │ ▢ 123│
 │ ▢ item  │      │ r2 ▮▮▯│        │        │       │      │
 └─────────┴──────┴───────┴────────┴────────┴───────┴──────┘
-  ⚠ Needs human: job-122 (merge gate)     ✖ Failed: —
 ```
 
-- **Board.** Jobs move left to right across the stage columns. Needs human and Failed are highlighted lanes.
+- **Board.** Jobs move left to right across the stage columns. A Needs human lane sits after Review and holds every job waiting on a person. A failed job stays in its stage column with a Failed badge.
 - **Card.** Number and title, round, reviewer chips (built-in and repo-defined) that fill in as verdicts arrive, a token bar against the budget, a gate badge, and a stall marker. The server works out stalls from transcript modification times.
+- **Alerts.** A job raises an alert when it needs a human, fails, errors, reaches the budget warning or finishes. Alerts are stored in `job-<n>/alerts.json`, shown at the top of the card detail (and as a 🔔 count on the card), and cleared by the human, one at a time or all at once.
 - **Card detail.** A step-by-step timeline. Each stage shows its status, agent and model, duration, tokens, the reviewers selected and why, verdicts, and links to open its files rendered as markdown. Below the timeline: round history, errors and guardrail blocks, and learnings applied.
 - **Header.** Month tokens against budget, and jobs in progress.
 - **Trends.** The §7 metrics over the last 30 jobs.
@@ -511,10 +505,10 @@ A **Settings** tab in the dashboard for editing `SDLC.md`, available with every 
 - `when` rules are checked as you type. Instruction files and project subagents a reviewer refers to must exist.
 - Changes are also checked against cross-field rules (for example, no `per_stage` budget may exceed `per_job`). Saving shows a diff first. `sdlc.py config set` writes only the changed keys, keeps comments, and writes only overrides.
 - Each save carries the file's hash. If `SDLC.md` changed on disk in the meantime, the save is rejected and the form reloads.
-- Learnings and Answers, from both `SDLC.md` and the pending file, can be edited or removed. Pending proposals have **Accept** and **Reject** buttons, which do the same as `/sdlc:approve learnings <id>`.
+- Learnings and Answers, from `SDLC.md`, are listed in Settings.
 - Secrets show only their `userConfig` name and whether they're set. Commands are never run from the UI.
 - Saving changes only the working tree. A banner shows "SDLC.md has uncommitted changes". Each save logs a `config_change` event.
-- Writes must be `POST` requests with the session token and a matching `Origin`. The server writes only `SDLC.md` and `learnings-pending.md`.
+- Writes must be `POST` requests with the session token and a matching `Origin`. The server writes only `SDLC.md` and reviewer files.
 
 ## E2. Team boards
 
@@ -535,7 +529,7 @@ board:
   - Each ticket gets one **status comment**, edited in place at every stage change: the stage stepper, verdicts, tokens against budget, owner and links. The team's board is the dashboard. `/sdlc:dashboard` prints its link and serves Settings locally.
 - **Claims.** A job is claimed by one person (assignee + `sdlc:claimed` label). Takeovers are never automatic. `/sdlc:start <id>` on someone else's claim shows the owner and their last activity, and needs `--takeover`. The job branch is pushed after every round, so taking over never needs someone else's laptop.
 - **Approvals.** The merge gate is the PR's approval (§4). The spec and budget gates can be approved on the ticket with a `/sdlc approve <gate>` comment or an `sdlc:approved/<gate>` label from someone with write access. The background `sdlc.py wait` (§4) watches for them and notifies the claimer's session. If that session has ended, `/sdlc:start <id>` picks the approval up.
-- **Learnings** are shared through each person's rolling `sdlc/learnings-<user>` PR (§7). Until it merges, a person's pending learnings apply only to their own runs.
+- **Learnings** are written into `SDLC.md` by the retro (§7), so they are shared like any other change to that file.
 - **`/sdlc:intake`** creates a ticket, or adopts an existing one (`/sdlc:intake SHOP-142`).
 - **Optional:** if the repo's host is GitHub, `reviewers.code.engine: service` uses Claude Code's managed Code Review service on the PR instead of a local `/code-review` (Team/Enterprise plans).
 
@@ -603,7 +597,7 @@ Every version must pass `claude plugin validate --strict` and the evals, which r
 - **Happy path.** A feature ends `done` with every artifact, event and token count in its job folder, and nothing is written inside the repo outside `.sdlc/`.
 - **Self-contained job.** Delete a done job's folder and an in-progress job's folder. The board, `status`, budgets, learnings and the next job still work. Job numbers aren't reused. `status --check` reports the orphaned worktree and branch.
 - **Repo reviewers.** An `instructions` reviewer at the spec step with a `condition`, an `agent` reviewer, and a `run` reviewer at the merge step each run only when selected, and each writes the standard format. A blocking CHANGES sends the job back to the right agent.
-- **Learning.** Job 1 hits a known problem. Job 2 must avoid it without asking the human again, before the learnings PR is merged. Two users' retros running in parallel produce no ID collisions or branch conflicts.
+- **Learning.** Job 1 hits a known problem. Job 2 must avoid it without asking the human again. Two retros running in parallel produce no ID collisions.
 - **Budget.** A tiny `per_stage` budget sends the job to needs-human. `approve budget` re-runs that stage, not the merge.
 - **Override.** A job that hits max rounds at review, then gets approved, merges with `override: true` in `decision.md`. A job that hits max spec revisions, then gets approved, goes on to build.
 - **Protected paths.** A builder that changes a protected file through Bash is caught by the merge rule check.

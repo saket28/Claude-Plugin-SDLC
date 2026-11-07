@@ -16,7 +16,7 @@ Rules:
   or touch other branches.
 - Follow CLAUDE.md and the repo's existing conventions. Run the relevant tests yourself
   before finishing.
-- Don't edit SDLC.md, REVIEW.md, review-*.md, CLAUDE.md or CI workflows.
+- Don't edit SDLC.md, REVIEW.md, review-*.md, .claude/reviewers/, .claude/agents/, CLAUDE.md or CI workflows.
 
 Write exactly one report file: the `output` path in the brief's frontmatter. Format:
 

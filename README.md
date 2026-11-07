@@ -21,17 +21,16 @@ Status: **v0.1, in development.** See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the
 | `/sdlc:intake <text>` | Add a feature to the backlog |
 | `/sdlc:start [id \| text]` | Start the next backlog item, a new feature, or continue a job |
 | `/sdlc:status [id] [--check]` | Jobs, stages, tokens, and anything waiting on you; `--check` runs a health check |
-| `/sdlc:approve <id> <gate>` | Pass a gate: `spec`, `merge`, `budget +500k`, `override`, `retry`; or `learnings` |
+| `/sdlc:approve <id> <gate>` | Pass a gate: `spec`, `merge`, `budget +500k`, `override`, `retry` |
 | `/sdlc:rework <id> "<feedback>"` | Send a job back to the builder with your feedback |
 | `/sdlc:cancel <id>` | Cancel a job, keeping its record |
-| `/sdlc:add-reviewer [name]` | Add a reviewer (instructions file, subagent or command) through a guided flow |
 | `/sdlc:review [names] [--base b]` | Run the named reviewers (default all) on the current branch; one consolidated report |
 | `/sdlc:dashboard` | Open the local dashboard (board, timelines, tokens, settings, help) |
 | `/sdlc:help [topic]` | Explain commands, flow, reviewers and config (`commands`, `flow`, `reviewers`, `config`) |
 
 ## Adding a reviewer
 
-Run `/sdlc:add-reviewer`, or add an entry under `reviewers:` in `SDLC.md` by hand. Each uses exactly one kind: `instructions: review-x.md` (a markdown file saying what to check; starter in `templates/review-template.md`), `agent: name` (a `.claude/agents/name.md` subagent), or `run: "<command>"` (exit 0 = pass, no tokens). Trigger it with `at` (`spec`, `review`, `merge`), `when` (`risk>=medium`, `touches-ui`, `paths:[src/auth/**]`) and/or a plain-language `condition`; `blocking: false` makes it advisory. Details and examples: `/sdlc:help reviewers` or [reference/help.md](reference/help.md).
+Each reviewer is a markdown file in `.claude/reviewers/`: its frontmatter holds its settings (`at`, `when`, `condition`, `blocking`, `model`, and `agent:` or `run:` for those types) and its body is the instructions. `SDLC.md` just lists the paths: `reviewers: [.claude/reviewers/code.md, .claude/reviewers/security.md]`. `/sdlc:init` creates `code.md` and `security.md` (Claude Code's built-in `/code-review` and `/security-review`, both using `REVIEW.md`). Add or edit reviewers in the dashboard: `/sdlc:dashboard` → Settings → Reviewers → **+ Add reviewer**; the file is created from a template with the right sections. Details and examples: `/sdlc:help reviewers` or [reference/help.md](reference/help.md).
 
 ## Configuration
 

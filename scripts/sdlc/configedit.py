@@ -129,19 +129,49 @@ def _set(lines, raw, path, value):
     return lines, raw
 
 
-def save(cfg, changes, expected_hash, source="ui"):
+CONVENTION = re.compile(r"^\.claude/(reviewers|agents)/[A-Za-z0-9][A-Za-z0-9_-]*\.md$")
+
+
+def _files_to_write(root, files, new_text):
+    """Reviewer files edited in the dashboard: {path: content}. Allowed: .claude/reviewers/<name>.md,
+    .claude/agents/<name>.md, or the instructions file an existing reviewer already points at."""
+    if not files:
+        return {}
+    raw, _ = yamlish.parse_frontmatter(new_text)
+    known = {r["instructions"] for r in (raw.get("reviewers") or {}).values()
+             if isinstance(r, dict) and isinstance(r.get("instructions"), str)}
+    out = {}
+    for rel, text in files.items():
+        p = (root / rel).resolve()
+        if not (CONVENTION.match(rel) or rel in known) or root.resolve() not in p.parents or p.suffix != ".md":
+            raise EditError(f"cannot write {rel}: only .claude/reviewers/<name>.md, .claude/agents/<name>.md "
+                            "or a reviewer's own instructions file")
+        out[rel] = str(text)
+    return out
+
+
+def describe_writes(root, todo):
+    return [{"path": p, "new": not (root / p).exists()} for p in sorted(todo)
+            if not (root / p).exists() or (root / p).read_text() != todo[p]]
+
+
+def save(cfg, changes, expected_hash, source="ui", files=None):
     path = cfg.root / "SDLC.md"
     text = path.read_text() if path.exists() else "---\n---\n"
     if expected_hash and file_hash(text) != expected_hash:
         raise EditError("SDLC.md changed on disk since you loaded it; reload and try again")
     new = apply(text, changes)
+    todo = _files_to_write(cfg.root, files, new)
     tmp = path.with_suffix(".md.tmp")
     tmp.write_text(new)
     try:
-        _validate_text(cfg.root, new)             # validate before replacing the real file
+        _validate_text(cfg.root, new, todo)       # validate before replacing the real file
     except config.ConfigError:
         tmp.unlink()
         raise
+    for rel, content in todo.items():
+        (cfg.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (cfg.root / rel).write_text(content)
     tmp.replace(path)
     from .store import append_jsonl, now
     append_jsonl(cfg.work_dir / "config-events.jsonl",
@@ -149,10 +179,10 @@ def save(cfg, changes, expected_hash, source="ui"):
     return file_hash(new)
 
 
-def _validate_text(root, text):
+def _validate_text(root, text, assume_files=()):
     raw, body = yamlish.parse_frontmatter(text)
     data = config.deep_merge(config.DEFAULTS, {k: v for k, v in raw.items() if k != "reviewers"})
-    data["reviewers"] = config.merge_reviewers(config.DEFAULTS["reviewers"], raw.get("reviewers"))
+    data["reviewers"], _, _ = config.resolve_reviewers(root, raw.get("reviewers"))
     for key in ("protected_paths", "blocked_commands"):
         data[key] = list(dict.fromkeys(config.DEFAULTS[key] + (raw.get(key) or [])))
     if not data["host"].get("adapter"):
@@ -161,4 +191,4 @@ def _validate_text(root, text):
     over = [k for k, v in (b.get("per_stage") or {}).items() if isinstance(v, int) and v > b["per_job"]]
     if over:
         raise config.ConfigError("SDLC.md is invalid:\n  - per_stage budgets above per_job: " + ", ".join(over))
-    config.validate(config.Config(root, data, body, raw))
+    config.validate(config.Config(root, data, body, raw), set(assume_files))

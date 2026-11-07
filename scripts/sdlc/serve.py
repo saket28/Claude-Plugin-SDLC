@@ -1,8 +1,8 @@
 """Local dashboard server (INSTRUCTIONS.md §9, E1). Standard library only.
 
 Listens on 127.0.0.1, random port, with a per-run token. Reads job folders on
-every request (no stored board), and writes only SDLC.md and
-learnings-pending.md, and only through configedit / learn.
+every request (no stored board), and writes only SDLC.md and reviewer
+files, through configedit / reviewers.
 """
 
 import datetime as dt
@@ -14,11 +14,11 @@ import socketserver
 import urllib.parse
 from pathlib import Path
 
-from . import briefs, config as config_mod, configedit, learn, pipeline, runners
+from . import briefs, config as config_mod, configedit, pipeline, reviewers as reviewers_mod, runners
 from .store import Store
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent.parent
-COLUMNS = ["queued", "spec", "build", "verify", "review", "merge", "done"]
+COLUMNS = ["queued", "spec", "build", "verify", "review", "needs-human", "merge", "done"]
 
 
 def _ts(s):
@@ -29,8 +29,9 @@ def _ts(s):
 
 
 EXPLAIN = {
-    "max-rounds": "The builder and reviewers went back and forth the maximum number of automatic rounds and "
-                  "the reviewers still have blocking findings. Decide whether the remaining findings matter.",
+    "max-rounds": "The job used all {n} allowed rounds (max_rounds = {n}, the first build included) and the "
+                  "reviewers still have blocking findings. Decide whether the remaining "
+                  "findings matter.",
     "budget": "The job hit its token budget. Raise the budget to continue, or send it back with new direction.",
     "spec-max": "The spec reviewers still object after the maximum number of spec revisions.",
     "rules": "A merge rule (see config) is not satisfied, so the job cannot merge by itself.",
@@ -85,30 +86,44 @@ def _rounds(p, events):
     return out
 
 
-def help_for(p, st, status, gate, detail):
+IDLE = {"merge": "The merge gate is approved, but approving only records your decision. Nothing advances "
+                 "until the pipeline runs again; it will then rebase, re-verify and merge the branch.",
+        "default": "Nothing is running this job right now (no active session). Run it to carry on from "
+                   "the {stage} stage."}
+
+
+def A(cmd, note=""):
+    return {"cmd": cmd, "note": note}
+
+
+def help_for(p, st, status, gate, idle=False):
     """What a person must do for this job, in plain words, plus the exact commands."""
     j = p.job_id
     if status == "needs-human":
         reason = (st.needs_human or {}).get("reason", "")
         approve, rework = f"/sdlc:approve {j} ", f'/sdlc:rework {j} "what to change"'
-        acts = {"budget": [approve + "budget +500k   (raise the budget)", rework],
-                "spec-max": [approve + "spec   (accept the spec as it is)", rework],
-                "max-rounds": [approve + "override   (merge despite the open findings)",
-                               rework + "   (send back with your own direction)"],
-                "rules": [approve + "override", rework],
-                "disputed": [approve + "override", rework],
-                "adapter": [approve + "retry"]}.get(reason, [f"/sdlc:status {j}"])
-        return {"title": f"Needs a decision: {reason}", "explain": EXPLAIN.get(reason, ""),
+        acts = {"budget": [A(approve + "budget +500k", "raise the budget"), A(rework)],
+                "spec-max": [A(approve + "spec", "accept the spec as it is"), A(rework)],
+                "max-rounds": [A(approve + "override", "merge despite the open findings"),
+                               A(rework, "send back with your own direction")],
+                "rules": [A(approve + "override"), A(rework)],
+                "disputed": [A(approve + "override"), A(rework)],
+                "adapter": [A(approve + "retry")]}.get(reason, [A(f"/sdlc:status {j}")])
+        return {"title": f"Needs a decision: {reason}", "explain": EXPLAIN.get(reason, "").format(n=p.cfg["max_rounds"]),
                 "history": (st.needs_human or {}).get("detail", ""), "actions": acts}
     if gate:
         cmd = f"/sdlc:approve {j} {gate}"
         return {"title": f"Waiting for your approval: {gate} gate",
                 "explain": ("Read the spec and approve it, or send it back." if gate == "spec" else
                             "Review the branch or PR and approve it to merge."),
-                "history": "", "actions": [cmd, f'/sdlc:rework {j} "what to change"']}
+                "history": "", "actions": [A(cmd), A(f'/sdlc:rework {j} "what to change"')]}
+    if idle and status not in ("done", "failed", "cancelled"):
+        return {"title": f"Paused at {status}: nothing is running it",
+                "explain": IDLE.get(status, IDLE["default"]).format(stage=status), "history": "", "idle": True,
+                "actions": [A(f"/sdlc:start {j}", "continue the job")]}
     if status == "failed":
         return {"title": "Failed", "explain": (st.failed or {}).get("reason", ""), "history": "",
-                "actions": [f"/sdlc:start {j}   (retry)"]}
+                "actions": [A(f"/sdlc:start {j}", "retry")]}
     return None
 
 
@@ -132,6 +147,8 @@ def job_summary(cfg, meta, detail=False):
         fr, _ = runners.read_artifact(folder / f"review-{name}.md")
         if fr:
             reviewers[name] = fr.get("verdict", "pending")
+    idle = bool(not session or session.get("closing")) and bool(
+        last and (dt.datetime.now(dt.timezone.utc) - last).total_seconds() > 60)
     waiting = None
     for g, s in st.gates.items():
         if s == "waiting":
@@ -141,17 +158,15 @@ def job_summary(cfg, meta, detail=False):
            "reviewers": reviewers, "gate": waiting, "stalled": stalled,
            "why": (st.needs_human or {}).get("reason") or (st.failed or {}).get("reason"),
            "detail": (st.needs_human or {}).get("detail", ""), "updated": last.isoformat() if last else None,
-           "help": help_for(p, st, status, waiting, "")}
+           "help": help_for(p, st, status, waiting, idle), "alerts": len(Store(cfg).alerts(meta["id"]))}
     if out["help"] and detail:
         out["help"]["findings"] = _findings(folder)
     if detail:
         out.update(source=meta.get("source"), created=meta.get("created"), owner=meta.get("owner"),
                    branch=meta["branch"], pr=meta.get("pr"), by_stage=by_stage,
-                   rounds=_rounds(p, events), timeline=timeline(events, by_stage), overrides=st.overrides,
-                   files=sorted(str(f.relative_to(p.dir)) for f in p.dir.rglob("*.md")
-                                if "briefs" not in f.parts),
+                   timeline=_enrich(timeline(events, by_stage), p, _rounds(p, events), out["help"], events, cfg),
+                   alerts=Store(cfg).alerts(meta["id"]), overrides=st.overrides, max_rounds=cfg["max_rounds"],
                    blocks=[e for e in events if e["type"] in ("guardrail_block", "error", "retry")][-20:],
-                   selections=[e for e in events if e["type"] == "selection"],
                    applied=sorted(set(_applied(p.dir))))
     return out
 
@@ -164,19 +179,114 @@ def _applied(d):
         yield from re.findall(r"applied:\s*([LA]-[0-9a-f]+)", f.read_text(errors="replace"))
 
 
-def timeline(events, by_stage):
-    steps, cur = [], None
+def _note(e):
+    """One human sentence for events that explain why a stage is where it is."""
+    t, by = e["type"], (" by " + e["by"]) if e.get("by") else ""
+    return {"gate": f"{e.get('gate')} gate {e.get('status')}{by}",
+            "override": f"override{by}: {e.get('reason', '')}",
+            "resume": f"resumed{by}",
+            "needs_human": f"needs a human ({e.get('reason')}): {e.get('detail', '')}",
+            "failed": f"failed: {e.get('reason', '')}",
+            "pr": f"PR opened: {e.get('url')}",
+            "retry": f"retry: {e.get('detail', '')}"}.get(t)
+
+
+def _first_para(text, limit=220):
+    for para in re.split(r"\n\s*\n", text or ""):
+        para = para.strip()
+        if para and not para.startswith(("#", "Commit `")):
+            para = " ".join(para.split())
+            return para if len(para) <= limit else para[:limit].rstrip() + "…"
+    return ""
+
+
+def _reviewers(stage, n, r, events, cfg, first):
+    """Everyone considered for this review step: who ran and what they said, who was skipped and why,
+    and (first visit only) configured reviewers the job never evaluated."""
+    ran = {x["reviewer"]: x for x in (r or {}).get("reviews", [])}
+    out, named = [], set()
     for e in events:
+        if e["type"] == "selection" and e.get("step") == stage and e.get("round") == n:
+            named.add(e["reviewer"])
+            x = ran.get(e["reviewer"])
+            spec = (cfg["reviewers"].get(e["reviewer"]) or {}) if cfg else {}
+            out.append({"name": e["reviewer"], "state": "ran" if x or e["selected"] else "skipped",
+                        "verdict": (x or {}).get("verdict") or ("pending" if e["selected"] else ""),
+                        "reason": e.get("reason") or ("" if e["selected"] else f"its rule was not met (when: {spec.get('when', 'always')})"),
+                        "findings": (x or {}).get("findings", []),
+                        "blocking": spec.get("blocking", True)})
+    if first and cfg:
+        everyone = {e["reviewer"] for e in events if e["type"] == "selection"}
+        for name, spec in cfg["reviewers"].items():
+            if name not in everyone and spec.get("at", "review") == stage:
+                out.append({"name": name, "state": "not evaluated", "verdict": "", "findings": [],
+                            "reason": "no record for this job: probably added to SDLC.md after this job's review",
+                            "blocking": spec.get("blocking", True)})
+    return out
+
+
+def _enrich(steps, p, rounds, help_, events=(), cfg=None):
+    """Give every timeline step: an outcome, a one-line summary, the files behind it, its details
+    (builder notes, verdicts, review findings) and, on the current step, what a person must do."""
+    by_n, seen = {r["n"]: r for r in rounds}, set()
+    for s in steps:
+        n, stage = s["round"], s["stage"]
+        r, d = by_n.get(n), p.round_dir(n)
+        rel = lambda *names: [f"{d.name}/{x.name}" for pat in names for x in sorted(d.glob(pat))]
+        s["status"], s["summary"], s["files"], s["detail"] = "", "", [], {}
+        if stage == "spec":
+            s["files"] = ["spec.md"] if (p.dir / "spec.md").exists() else []
+            _, body = runners.read_artifact(p.dir / "spec.md")
+            s["summary"] = _first_para(re.sub(r"^#.*$", "", body or "", flags=re.M))
+        elif stage == "build" and r:
+            s["files"] = rel("build.md")
+            note = f"Round {n}, started because {r['started']}. " if n > 1 and r["started"] else ""
+            s["summary"] = note + _first_para(r["build"])
+            s["detail"] = {"build": r["build"]}
+        elif stage == "verify" and r:
+            s["files"] = rel("verify.md", "test.md")
+            v = r["verdicts"]
+            s["status"] = ("FAIL" if any(x != "PASS" for x in v.values()) else "PASS") if v else ""
+            s["summary"] = " · ".join(f"{k} {x}" for k, x in v.items())
+        elif stage in ("review", "merge") and (r or stage == "merge"):
+            if stage == "review":
+                s["files"] = rel("review-*.md")
+            else:
+                s["files"] = rel("verify-final*.md", "pr-body.md")
+            revs = _reviewers(stage, n, r, events, cfg, first=stage not in seen)
+            seen.add(stage)
+            ran = [x for x in revs if x["state"] == "ran"]
+            vs = [x["verdict"] for x in ran]
+            if stage == "review":
+                s["status"] = "CHANGES" if "CHANGES" in vs else "PASS" if vs else ""
+            parts = [x["name"] + " " + x["verdict"] +
+                     (f" ({sum(1 for f in x['findings'] if not f['severity'].lower().startswith('nit'))} important)"
+                      if x["verdict"] == "CHANGES" else "") for x in ran]
+            parts += [x["name"] + " skipped" for x in revs if x["state"] == "skipped"]
+            s["summary"] = " · ".join(parts)
+            s["detail"] = {"reviewers": revs}
+    if steps and help_:
+        steps[-1]["attention"] = {k: help_.get(k) for k in ("title", "explain", "history", "actions")}
+    return steps
+
+
+def timeline(events, by_stage):
+    steps, cur, rnd = [], None, 1
+    for e in events:
+        if e["type"] == "round":
+            rnd = e["n"]
         if e["type"] == "stage":
             if cur:
                 cur["end"] = e["ts"]
-            cur = {"stage": e["stage"], "start": e["ts"], "end": None, "agents": [], "verdicts": []}
+            cur = {"stage": e["stage"], "start": e["ts"], "end": None, "round": rnd, "agents": [], "verdicts": [], "notes": []}
             steps.append(cur)
         elif cur and e["type"] == "agent":
             d = e.get("data") or {}
             cur["agents"].append({"agent": e.get("agent"), "model": d.get("model"),
                                   "tokens": d.get("tokens", 0), "cache_read": d.get("cache_read", 0),
                                   "duration_s": d.get("duration_s"), "reviewer": e.get("reviewer")})
+        elif cur and (note := _note(e)):
+            cur["notes"].append({"ts": e["ts"], "text": note})
         elif cur and e["type"] == "verdict":
             cur["verdicts"].append({k: e.get(k) for k in ("step", "reviewer", "verdict", "round")})
     for s in steps:
@@ -202,11 +312,13 @@ def settings(cfg):
     text = (cfg.root / "SDLC.md").read_text() if (cfg.root / "SDLC.md").exists() else ""
     schema = json.loads((PLUGIN_ROOT / "templates" / "sdlc.schema.json").read_text())
     body = cfg.body_sections()
-    pend = briefs.pending_sections(cfg)
     return {"schema": schema, "effective": cfg.data, "overrides": cfg.raw, "hash": configedit.file_hash(text),
             "defaults": config_mod.DEFAULTS,
+            "reviewer_template": (PLUGIN_ROOT / "templates" / "review-template.md").read_text(),
+            "agent_template": (PLUGIN_ROOT / "templates" / "reviewer-agent-template.md").read_text(),
+            "reviewers_mode": "files" if isinstance(cfg.raw.get("reviewers"), list) else "inline",
+            "problems": cfg.problems,
             "learnings": {s: briefs.parse_entries(body.get(s, "")) for s in ("Learnings", "Answers")},
-            "pending": {s: briefs.parse_entries(pend.get(s, "")) for s in learn.SECTIONS},
             "usage": {"month": Store(cfg).month_tokens()}}
 
 
@@ -238,7 +350,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         if not self._authorized(q):
             return self._send(403, {"error": "missing or wrong token"})
-        cfg = config_mod.load(self.root)
+        cfg = config_mod.load(self.root, lenient=True)
         if u.path == "/":
             return self._send(200, (PLUGIN_ROOT / "templates" / "dashboard.html").read_text(), "text/html")
         if u.path == "/api/board":
@@ -254,6 +366,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, f.read_text(errors="replace"), "text/plain")
         if u.path == "/api/settings":
             return self._send(200, settings(cfg))
+        if u.path == "/api/reviewer":
+            return self._send(200, reviewer_file(cfg, q["name"][0]))
         if u.path == "/api/help":
             return self._send(200, (PLUGIN_ROOT / "reference" / "help.md").read_text(), "text/plain")
         return self._send(404, {"error": "not found"})
@@ -271,23 +385,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(min(n, 1_000_000)) or b"{}")
         except json.JSONDecodeError:
             return self._send(400, {"error": "bad JSON"})
-        cfg = config_mod.load(self.root)
+        cfg = config_mod.load(self.root, lenient=True)
         try:
             if u.path == "/api/settings/preview":
                 text = (cfg.root / "SDLC.md").read_text()
                 new = configedit.apply(text, req.get("changes", {}))
-                configedit._validate_text(cfg.root, new)
-                return self._send(200, {"before": text, "after": new})
+                todo = configedit._files_to_write(cfg.root, req.get("files"), new)
+                configedit._validate_text(cfg.root, new, todo)
+                return self._send(200, {"before": text, "after": new,
+                                        "writes": configedit.describe_writes(cfg.root, todo)})
             if u.path == "/api/settings":
-                h = configedit.save(cfg, req.get("changes", {}), req.get("hash"))
+                h = configedit.save(cfg, req.get("changes", {}), req.get("hash"), files=req.get("files"))
                 return self._send(200, {"saved": True, "hash": h})
+            if u.path == "/api/reviewer/save":
+                rel = reviewers_mod.save(cfg, req.get("name"), req.get("front") or {}, req.get("body") or "",
+                                         req.get("agent_content"))
+                return self._send(200, {"saved": rel})
+            if u.path == "/api/reviewer/delete":
+                return self._send(200, {"removed": reviewers_mod.delete(cfg, req.get("name"))})
+            if u.path == "/api/reviewers/convert":
+                return self._send(200, reviewers_mod.convert_legacy(cfg))
             if u.path == "/api/backlog":
                 return self._send(200, backlog_action(cfg, req))
-            if u.path == "/api/learnings":
-                return self._send(200, learnings_action(cfg, req))
+            if u.path == "/api/alerts/clear":
+                Store(cfg).load_job(req["job"])
+                return self._send(200, {"cleared": Store(cfg).clear_alerts(req["job"], req.get("ids"))})
+            if u.path == "/api/learnings/update":
+                return self._send(200, update_learning(cfg, req.get("id"), req.get("roles"), req.get("text")))
+            if u.path == "/api/learnings/delete":
+                return self._send(200, delete_learning(cfg, req.get("id")))
         except (configedit.EditError, config_mod.ConfigError, ValueError, KeyError) as e:
             return self._send(400, {"error": str(e)})
         return self._send(404, {"error": "not found"})
+
+
+def reviewer_file(cfg, name):
+    """The editable file behind a custom reviewer: its instructions, or its subagent definition."""
+    r = cfg["reviewers"].get(name) or {}
+    rel = r.get("instructions") or (f".claude/agents/{r['agent']}.md" if r.get("agent") else None)
+    if not rel:
+        return {"path": None, "content": ""}
+    f = (cfg.root / rel).resolve()
+    if cfg.root.resolve() not in f.parents or f.suffix != ".md":
+        raise ValueError("not an editable reviewer file")
+    return {"path": rel, "content": f.read_text(errors="replace") if f.exists() else ""}
 
 
 def backlog_action(cfg, req):
@@ -308,25 +449,33 @@ def backlog_action(cfg, req):
     raise ValueError("action must be add, update or delete")
 
 
-def learnings_action(cfg, req):
-    from .cli import approve_learnings
-    ids, action = req.get("ids") or [], req.get("action")
-    if action == "accept":
-        return approve_learnings(cfg, ids)
-    if action == "reject":
-        p = cfg.work_dir / "learnings-pending.md"
-        secs = briefs.pending_sections(cfg)
-        moved = []
-        text = p.read_text()
-        for sec in ("Proposals", "Learnings", "Answers"):
-            for e in briefs.parse_entries(secs.get(sec, "")):
-                if e["id"] in ids:
-                    text = text.replace(e["line"] + "\n", "")
-                    moved.append(e["line"])
-        text = text.replace("## Rejected\n", "## Rejected\n" + "".join(l + "\n" for l in moved), 1)
-        p.write_text(text)
-        return {"rejected": len(moved)}
-    raise ValueError("action must be accept or reject")
+def delete_learning(cfg, entry_id):
+    """Remove one Learning or Answer line from SDLC.md."""
+    path = cfg.root / "SDLC.md"
+    text = path.read_text() if path.exists() else ""
+    lines = text.splitlines(keepends=True)
+    keep = [l for l in lines if not (briefs.ENTRY.match(l) and briefs.ENTRY.match(l).group("id") == entry_id)]
+    if len(keep) == len(lines):
+        raise KeyError(f"no learning or answer {entry_id}")
+    path.write_text("".join(keep))
+    return {"deleted": entry_id}
+
+
+def update_learning(cfg, entry_id, roles, text):
+    """Rewrite one Learning or Answer line, keeping its id."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        raise ValueError("text is required")
+    roles = ", ".join(str(r).strip() for r in (roles or []) if str(r).strip()) or "all"
+    path = cfg.root / "SDLC.md"
+    lines = (path.read_text() if path.exists() else "").splitlines(keepends=True)
+    for i, l in enumerate(lines):
+        m = briefs.ENTRY.match(l)
+        if m and m.group("id") == entry_id:
+            lines[i] = f"- [{entry_id}] {roles} · {text}\n"
+            path.write_text("".join(lines))
+            return {"updated": entry_id}
+    raise KeyError(f"no learning or answer {entry_id}")
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -339,6 +488,7 @@ def serve(cfg, port=0, open_browser=False):
     Handler.token, Handler.root = token, cfg.root
     Handler.origin = f"http://127.0.0.1:{srv.server_address[1]}"
     url = f"{Handler.origin}/?token={token}"
+    cfg.work_dir.mkdir(parents=True, exist_ok=True)
     (cfg.work_dir / "dashboard.url").write_text(url + "\n")
     print(json.dumps({"url": url}), flush=True)
     if open_browser:

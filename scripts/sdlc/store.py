@@ -68,6 +68,25 @@ def slug(text, n=40):
     return s[:n].rstrip("-") or "job"
 
 
+def alert_for(e):
+    """The alert an event raises, or None: needs-human, failed, error, budget warning, done."""
+    t = e.get("type")
+    if t == "needs_human":
+        kind, text = "needs-human", f"Needs a human ({e.get('reason')}): {e.get('detail', '')}".strip()
+    elif t == "failed":
+        kind, text = "failed", f"Failed: {e.get('reason', '')}"
+    elif t == "error":
+        kind, text = "error", f"Error in {e.get('stage', 'pipeline')}: {e.get('detail', '')}"
+    elif t == "budget" and e.get("level") == "warn":
+        kind, text = "budget-warning", f"Budget warning ({e.get('scope')}): {e.get('used'):,} of {e.get('limit'):,} tokens"
+    elif t == "stage" and e.get("stage") == "done":
+        kind, text = "done", "Job is done and merged"
+    else:
+        return None
+    return {"id": hashlib.sha1(f"{e.get('ts')}{kind}{text}".encode()).hexdigest()[:8],
+            "ts": e.get("ts"), "kind": kind, "text": text}
+
+
 class Store:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -147,8 +166,47 @@ class Store:
 
     def event(self, job_id, type_, **fields):
         rec = {"ts": now(), "type": type_, **fields}
+        alert = alert_for(rec)
+        if alert and (self.job_dir(job_id) / "events.jsonl").exists():
+            self.alerts(job_id)                  # backfill older events first, before this one is appended
         append_jsonl(self.job_dir(job_id) / "events.jsonl", rec)
+        if alert:
+            self.add_alert(job_id, alert)
         return rec
+
+    # ---- alerts: job-<n>/alerts.json, cleared by the human -------------------
+    def _alerts_path(self, job_id):
+        return self.job_dir(job_id) / "alerts.json"
+
+    def alerts(self, job_id):
+        p = self._alerts_path(job_id)
+        if not p.exists():                       # jobs from before alerts existed: build from events once
+            found = [a for a in map(alert_for, self.events(job_id)) if a]
+            if self.job_dir(job_id).exists():
+                with locked(p):
+                    if not p.exists():
+                        write_atomic(p, json.dumps(found))
+            return found
+        try:
+            return json.loads(p.read_text() or "[]")
+        except ValueError:
+            return []
+
+    def add_alert(self, job_id, alert):
+        p = self._alerts_path(job_id)
+        with locked(p):
+            cur = json.loads(p.read_text() or "[]") if p.exists() else []
+            cur.append(alert)
+            write_atomic(p, json.dumps(cur))
+
+    def clear_alerts(self, job_id, ids=None):
+        p = self._alerts_path(job_id)
+        self.alerts(job_id)
+        with locked(p):
+            cur = json.loads(p.read_text() or "[]")
+            keep = [a for a in cur if ids and a["id"] not in ids]
+            write_atomic(p, json.dumps(keep))
+        return len(cur) - len(keep)
 
     # ---- usage ledger -------------------------------------------------------
     def ledger_path(self, month=None):

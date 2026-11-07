@@ -112,21 +112,34 @@ class LocalHost(Adapter):
                     "reason": (r.stderr or r.stdout).strip()[:500]}
         return {"updated": True}
 
-    def op_merge(self, branch, base, **_):
+    def op_merge(self, branch, base, strategy="squash", message="", **_):
+        """The branch was just rebased onto base, so its tree is exactly what should land.
+        squash = one commit on base, merge = a merge commit, rebase = fast-forward (keeps every commit)."""
         root = self.cfg.root
         current = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root, check=False)
         if subprocess.run(["git", "merge-base", "--is-ancestor", base, branch],
                           cwd=root, capture_output=True).returncode != 0:
             return {"merged": False, "reason": f"{branch} is not ahead of {base}; rebase first"}
+        tip, old = git("rev-parse", branch, cwd=root), git("rev-parse", base, cwd=root)
+        message = message or f"Merge {branch}"
+        if strategy == "rebase":
+            new = tip
+        else:
+            parents = ["-p", old] + (["-p", tip] if strategy == "merge" else [])
+            r = subprocess.run(["git", "commit-tree", f"{tip}^{{tree}}", *parents, "-m", message],
+                               cwd=root, capture_output=True, text=True)
+            if r.returncode != 0:
+                return {"merged": False, "reason": r.stderr.strip()[:500]}
+            new = r.stdout.strip()
         if current == base:
             if git("status", "--porcelain", "--untracked-files=no", cwd=root, check=False):
                 return {"merged": False, "blocked": "checkout-dirty",
                         "reason": "the main checkout has uncommitted changes"}
-            r = subprocess.run(["git", "merge", "--ff-only", branch], cwd=root,
+            r = subprocess.run(["git", "merge", "--ff-only", new], cwd=root,
                                capture_output=True, text=True)
         else:
             # base isn't checked out here: move the ref without touching the user's work
-            r = subprocess.run(["git", "fetch", ".", f"{branch}:{base}"], cwd=root,
+            r = subprocess.run(["git", "update-ref", f"refs/heads/{base}", new, old], cwd=root,
                                capture_output=True, text=True)
         if r.returncode != 0:
             return {"merged": False, "reason": r.stderr.strip()[:500]}
@@ -189,10 +202,11 @@ class GitHubHost(Adapter):
                     "reason": (r.stderr or "").strip()[:500]}
         return {"updated": True}
 
-    def op_merge(self, branch, **_):
+    def op_merge(self, branch, strategy="squash", **_):
         if self.op_pr_status(branch=branch).get("merged"):
             return {"merged": True}
-        r = self.gh("pr", "merge", branch, "--squash", "--delete-branch", check=False)
+        r = self.gh("pr", "merge", branch, "--" + (strategy if strategy in ("squash", "merge", "rebase")
+                                                    else "squash"), "--delete-branch", check=False)
         if r.returncode != 0:
             return {"merged": False, "reason": (r.stderr or r.stdout).strip()[:500]}
         return {"merged": True}

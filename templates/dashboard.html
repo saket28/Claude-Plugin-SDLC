@@ -21,7 +21,7 @@
   .bar i { display:block; height:100%; background:var(--accent); }
   .bar i.warn { background:var(--wait); } .bar i.over { background:var(--fail); }
   main { padding:16px 20px; }
-  .board { display:grid; grid-template-columns:repeat(7, minmax(150px, 1fr)); gap:10px; }
+  .board { display:grid; grid-template-columns:repeat(8, minmax(140px, 1fr)); gap:10px; }
   .col { background:var(--chip); border-radius:10px; padding:8px; align-self:start; min-height:120px; }
   .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:2px 4px 8px; font-weight:600; }
   .col .count { font-weight:400; }
@@ -41,10 +41,16 @@
   .card .id { color:var(--muted); font-size:12px; }
   .chips { display:flex; flex-wrap:wrap; gap:4px; margin:6px 0; }
   .chip { font-size:11px; padding:1px 6px; border-radius:10px; background:var(--chip); color:var(--muted); }
-  .chip.PASS { color:#fff; background:var(--pass); } .chip.CHANGES { color:#fff; background:var(--changes); }
+  .chip.PASS { color:#fff; background:var(--pass); } .chip.CHANGES, .chip.FAIL { color:#fff; background:var(--changes); }
   .chip.skipped { opacity:.5; text-decoration:line-through; }
   .badge { font-size:11px; padding:1px 6px; border-radius:4px; background:var(--wait); color:#fff; }
   .card .why { font-size:12px; color:var(--muted); margin-top:6px; }
+  .md { max-width:900px; font-size:14px; line-height:1.55; }
+  .md h1 { font-size:20px; margin:0 0 10px; } .md h2 { font-size:16px; margin:22px 0 8px; } .md h3 { font-size:14px; margin:16px 0 6px; }
+  .md code { background:var(--card, rgba(127,127,127,.15)); padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .md pre { background:rgba(127,127,127,.12); padding:10px 12px; border-radius:6px; overflow:auto; } .md pre code { background:none; padding:0; }
+  .md table { border-collapse:collapse; margin:10px 0; font-size:13px; } .md th, .md td { border:1px solid rgba(127,127,127,.3); padding:5px 9px; text-align:left; vertical-align:top; }
+  .md th { background:rgba(127,127,127,.12); } .md ul, .md ol { padding-left:22px; margin:6px 0; }
   .helpbox { border:1px solid var(--wait); border-left-width:4px; border-radius:6px; padding:10px 12px; margin:12px 0; }
   .helpbox.fail { border-color:var(--fail); }
   .helpbox h3 { margin:0 0 4px; }
@@ -57,19 +63,28 @@
   .badge.fail { background:var(--fail); }
   .tok { height:4px; background:var(--chip); border-radius:2px; overflow:hidden; margin-top:6px; }
   .tok i { display:block; height:100%; background:var(--accent); }
-  .lanes { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
-  .lane { border:1px solid var(--line); border-left:4px solid var(--wait); border-radius:8px; padding:10px; background:var(--panel); }
-  .lane.failed { border-left-color:var(--fail); }
-  .lane h3 { margin:0 0 8px; font-size:13px; }
-  .lane .card { margin:0 0 6px; }
+  .alert { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-radius:6px; background:var(--chip); margin:4px 0; font-size:13px; }
+  .alert .k { font-size:11px; font-weight:600; text-transform:uppercase; min-width:92px; }
+  .alert.failed .k, .alert.error .k { color:var(--fail); } .alert.done .k { color:var(--pass); } .alert.needs-human .k, .alert.budget-warning .k { color:var(--wait); }
+  .alert .x { margin-left:auto; cursor:pointer; color:var(--muted); background:none; border:0; font:inherit; }
+  .bell { display:inline-flex; align-items:center; gap:3px; margin-left:6px; color:var(--wait); font-size:11px; vertical-align:middle; }
+  .bell svg { width:15px; height:15px; }
   .muted { color:var(--muted); }
   #drawer { position:fixed; top:0; right:0; width:min(720px, 100%); height:100%; background:var(--panel); border-left:1px solid var(--line);
             box-shadow:-8px 0 24px rgba(0,0,0,.08); transform:translateX(100%); transition:transform .15s; overflow:auto; padding:20px; }
   #drawer.open { transform:none; }
   #drawer .close { float:right; cursor:pointer; border:0; background:none; font-size:20px; color:var(--muted); }
   .step { border-left:2px solid var(--line); padding:0 0 14px 14px; position:relative; }
+  .step .shead { cursor:pointer; }
+  .step .ssum { color:var(--muted); font-size:12px; margin-top:2px; }
+  .step .sbody { display:none; margin-top:8px; }
+  .step.open .sbody { display:block; }
+  .step .caret { color:var(--muted); font-size:11px; margin-left:4px; }
+  .step.open .caret { display:inline-block; transform:rotate(90deg); }
+  .step .files { margin-top:8px; }
   .step:before { content:""; position:absolute; left:-6px; top:4px; width:10px; height:10px; border-radius:50%; background:var(--accent); }
-  .step h4 { margin:0; font-size:13px; text-transform:capitalize; }
+  .step .now { margin-top:6px; padding:8px 10px; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:6px; font-size:12px; }
+  .step .shead > b { text-transform:capitalize; }
   .step .meta { color:var(--muted); font-size:12px; }
   table { border-collapse:collapse; width:100%; font-size:13px; }
   td, th { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -77,6 +92,19 @@
   .files a { display:inline-block; margin:2px 8px 2px 0; color:var(--accent); cursor:pointer; font-size:13px; }
   pre.md { white-space:pre-wrap; background:var(--chip); padding:12px; border-radius:6px; font:12px/1.5 ui-monospace, Menlo, monospace; }
   .settings { max-width:900px; }
+  .rv-err { color:#e5484d; cursor:pointer; }
+  .rv-file { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .rv-errtext { color:#e5484d; margin-left:6px; }
+  .warn { background:rgba(255,160,0,.12); border:1px solid #b8860b; border-radius:6px; padding:8px 10px; margin-bottom:8px; font-size:12px; }
+  .warn button { margin-left:8px; padding:3px 10px; }
+  .rv-act { white-space:nowrap; }
+  .rv-act a, .entry .ia { margin-left:6px; color:var(--muted); cursor:pointer; display:inline-flex; vertical-align:middle; }
+  .rv-act a:first-child { margin-left:0; }
+  .rv-act a:hover, .entry .ia:hover { color:var(--accent); }
+  .ia.del:hover { color:#e5484d !important; }
+  .rv-act a.del:hover { color:#e5484d; }
+  .entry textarea, .entry input { font:inherit; font-size:13px; }
+  tr.changed td { background:rgba(80,120,255,.06); }
   .group { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:12px; }
   .group h3 { margin:0 0 10px; font-size:14px; }
   .field { display:grid; grid-template-columns:220px 1fr; gap:10px; padding:6px 0; align-items:start; }
@@ -104,10 +132,9 @@
 <main id="board-view">
   <div class="muted" id="trends" style="margin-bottom:10px"></div>
   <div class="board" id="board"></div>
-  <div class="lanes" id="lanes"></div>
 </main>
 <main id="settings-view" class="settings" hidden></main>
-<main id="help-view" hidden><pre id="help-text" style="white-space:pre-wrap;font:13px/1.5 ui-monospace,monospace;max-width:900px"></pre></main>
+<main id="help-view" hidden><div id="help-text" class="md"></div></main>
 <aside id="drawer"><button class="close" onclick="closeDrawer()">×</button><div id="drawer-body"></div></aside>
 <script>
 const TOKEN = new URLSearchParams(location.search).get("token");
@@ -118,7 +145,8 @@ const api = (p, opts={}) => fetch(p, {...opts, headers: H}).then(async r => {
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? Math.round(n/1e3)+"k" : String(n||0);
 const dur = s => s == null ? "" : s < 90 ? s+"s" : s < 5400 ? Math.round(s/60)+"m" : (s/3600).toFixed(1)+"h";
-const LABELS = {queued:"Backlog", spec:"Spec", build:"Build", verify:"Verify", review:"Review", merge:"Merge", done:"Done"};
+const ALERT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1z" fill="currentColor"/><path d="M8 6v4M8 11.6v.9" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>';
+const LABELS = {queued:"Backlog", spec:"Spec", build:"Build", verify:"Verify", review:"Review", "needs-human":"Needs human", merge:"Merge", done:"Done"};
 
 function meter(el, used, limit) {
   const f = limit ? used/limit : 0; el.style.width = Math.min(100, f*100)+"%";
@@ -157,94 +185,112 @@ const saveBacklog = id => postBacklog({action: id ? "update" : "add", id,
 const delBacklog = id => confirm("Delete this backlog item?") && postBacklog({action:"delete", id});
 
 function card(j) {
-  const chips = Object.entries(j.reviewers).map(([n,v]) => `<span class="chip ${esc(v)}">${esc(n)}</span>`).join("");
   const badge = j.gate ? `<span class="badge">${esc(j.gate)} gate</span>` :
-                j.status === "needs-human" ? `<span class="badge">${esc(j.why)}</span>` :
                 j.status === "failed" ? `<span class="badge fail">failed</span>` : "";
   const f = j.budget ? Math.min(100, j.tokens/j.budget*100) : 0;
   return `<div class="card" onclick="openJob('${esc(j.id)}')">
-    <div class="id">job-${esc(j.id)}${j.round > 1 ? " · r"+j.round : ""} ${j.stalled ? "· ⏸ stalled?" : ""}</div>
+    <div class="id">job-${esc(j.id)}${j.round > 1 ? " · r"+j.round : ""} ${j.stalled ? "· ⏸ stalled?" : ""}${j.alerts ? `<span class="bell" title="${j.alerts} alert(s) to check">${ALERT_ICON}<b>${j.alerts}</b></span>` : ""}</div>
     <div class="t">${esc(j.title)}</div>
-    ${chips ? `<div class="chips">${chips}</div>` : ""}${badge}
-    ${j.help && j.help.explain ? `<div class="why">${esc(j.help.explain)}</div>` : ""}
+    ${badge}
     <div class="tok" title="${fmt(j.tokens)} of ${fmt(j.budget)} tokens"><i style="width:${f}%"></i></div></div>`;
 }
 
 async function loadBoard() {
   const b = await api("/api/board");
   document.getElementById("repo").textContent = b.repo;
+  document.title = b.repo + " SDLC Dashboard";
   document.getElementById("month-label").textContent = `Month ${fmt(b.month.tokens)} / ${fmt(b.month.budget)}`;
   meter(document.getElementById("month-bar"), b.month.tokens, b.month.budget);
   const t = b.trends;
   document.getElementById("trends").textContent = t.jobs ?
     `Last ${t.jobs} done: avg ${fmt(t.avg_tokens)} tokens/job · first-pass ${Math.round(t.first_pass*100)}%` : "";
-  const active = b.jobs.filter(j => !["needs-human","failed","cancelled"].includes(j.status));
+  const active = b.jobs.filter(j => j.status !== "cancelled");
   document.getElementById("board").innerHTML = b.columns.map(c => {
-    const js = active.filter(j => (j.status === "done" ? "done" : j.stage) === c);
+    const js = active.filter(j => (j.status === "done" ? "done" : j.status === "needs-human" ? "needs-human" : j.stage) === c);
     const q = c === "queued";
     const extra = q ? b.backlog_items.map(blCard).join("") + `<button class="addcard" onclick="openBacklog()">+ Add a card</button>` : "";
     BACKLOG = b.backlog_items;
     return `<div class="col"><h2>${LABELS[c]} <span class="count">${js.length + (q?b.backlog_items.length:0)}</span></h2>${js.map(card).join("")}${extra}</div>`;
   }).join("");
-  const nh = b.jobs.filter(j => j.status === "needs-human"), fl = b.jobs.filter(j => j.status === "failed");
-  document.getElementById("lanes").innerHTML =
-    `<div class="lane"><h3>⚠ Needs human (${nh.length})</h3>${nh.map(card).join("") || '<span class="muted">—</span>'}</div>
-     <div class="lane failed"><h3>✖ Failed (${fl.length})</h3>${fl.map(card).join("") || '<span class="muted">—</span>'}</div>`;
 }
 
-function helpBox(j) {
-  const h = j.help;
-  if (!h) return "";
-  const fs = (h.findings || []).filter(f => !/^nit/i.test(f.severity));
-  const nits = (h.findings || []).length - fs.length;
-  return `<div class="helpbox ${j.status === "failed" ? "fail" : ""}"><h3>${esc(h.title)}</h3>
-    ${h.explain ? `<p>${esc(h.explain)}</p>` : ""}
-    ${h.history ? `<div class="muted">History: ${esc(h.history)}</div>` : ""}
-    ${fs.length ? `<h4>Open findings (${fs.length}${nits ? ", +" + nits + " nit" + (nits > 1 ? "s" : "") : ""})</h4>` +
-      fs.map(f => `<div class="finding"><span class="sev">${esc(f.reviewer)} · ${esc(f.severity)}</span><div>${esc(f.title)}</div>${f.why ? `<div class="muted">${esc(f.why)}</div>` : ""}</div>`).join("") : ""}
-    <h4>What you can do (click to select, then paste into Claude Code)</h4>
-    ${h.actions.map(a => `<code>${esc(a)}</code>`).join("")}</div>`;
+const sevOf = f => /^nit/i.test(f.severity) ? "nit" : "important";
+function findingHtml(f) {
+  return `<div class="finding"><span class="sev">${esc(f.severity)}</span><div>${esc(f.title)}</div>${f.why ? `<div class="muted">${esc(f.why)}</div>` : ""}</div>`;
 }
-function roundsHtml(j) {
-  if (!j.rounds.length) return "";
-  return `<h3>Rounds: what happened and why</h3>` + j.rounds.map(r => {
-    const vs = Object.entries(r.verdicts).map(([k,v]) => `${esc(k)}: <b>${esc(v)}</b>`).join(" · ");
-    const revs = r.reviews.map(v => `<div class="rev"><b>${esc(v.reviewer)}</b>: <b>${esc(v.verdict)}</b>
-      ${v.findings.map(f => `<div class="finding"><span class="sev">${esc(f.severity)}</span><div>${esc(f.title)}</div>${f.why ? `<div class="muted">${esc(f.why)}</div>` : ""}</div>`).join("")}</div>`).join("");
-    return `<details class="round" ${r.n === j.round ? "open" : ""}><summary>Round ${r.n} ${r.n > 1 ? "· started because: " + esc(r.started) : ""}
-      <span class="muted">${vs}${r.reviews.length ? " · " + r.reviews.map(v => esc(v.reviewer) + " " + esc(v.verdict) + " (" + v.findings.filter(f => !/^nit/i.test(f.severity)).length + ")").join(", ") : ""}</span></summary>
-      ${r.build ? `<h4>What the builder did</h4><pre class="md">${esc(r.build)}</pre>` : ""}
-      ${revs ? `<h4>Reviews</h4>${revs}` : ""}</details>`;
+function stepDetail(j, s, i) {
+  const d = s.detail || {};
+  const rv = (d.reviewers || []).map(v => {
+    const imp = v.findings.filter(f => sevOf(f) === "important").length, nit = v.findings.length - imp;
+    const head = v.state === "ran" ? `<span class="chip ${esc(v.verdict)}">${esc(v.verdict)}</span> ${v.findings.length ? `<small class="muted">${imp} important${nit ? ", " + nit + " nit" + (nit > 1 ? "s" : "") : ""}</small>` : ""}${v.blocking === false ? ' <small class="muted">advisory</small>' : ""}`
+      : `<span class="chip skipped" style="text-decoration:none">${esc(v.state)}</span> <small class="muted">${esc(v.reason || "")}</small>`;
+    return `<div class="rev"><b>${esc(v.name)}</b> ${head}${v.state === "ran" && v.reason ? ` <small class="muted">ran: ${esc(v.reason)}</small>` : ""}${v.findings.map(findingHtml).join("")}</div>`;
   }).join("");
+  const agents = s.agents.map(a => `<div class="meta">${esc(a.agent)}${a.reviewer ? " ("+esc(a.reviewer)+")" : ""} · ${esc(a.model||"")} · ${fmt(a.tokens)} tok${a.cache_read ? " · "+fmt(a.cache_read)+" cached" : ""} · ${dur(a.duration_s)}</div>`).join("");
+  const notes = (s.notes || []).map(n => `<div class="meta">${esc(n.text)}</div>`).join("");
+  const at = s.attention && s.attention.history ? `<div class="meta">History: ${esc(s.attention.history)}</div>` : "";
+  const files = s.files.length ? `<div class="files">Files: ${s.files.map(f => `<button class="secondary" onclick="openFile('${esc(j.id)}','${esc(f)}',${i})">${esc(f.split("/").pop())}</button>`).join(" ")}</div><div id="fv-${i}"></div>` : "";
+  return `${d.build ? `<h4>What the builder did</h4><pre class="md">${esc(d.build)}</pre>` : ""}
+    ${rv ? `<h4>Reviewers</h4>${rv}` : ""}${agents}${notes}${at}${files}`;
+}
+function timelineHtml(j) {
+  return j.timeline.map((s, i) => {
+    const att = s.attention;
+    const body = stepDetail(j, s, i);
+    const open = att && body.trim() ? " open" : "";
+    return `<div class="step${open}" id="step-${i}">
+      <div class="shead" onclick="document.getElementById('step-${i}').classList.toggle('open')">
+        <b>${esc(s.stage)}${s.round > 1 && s.stage !== "spec" && s.stage !== "queued" ? " · round " + s.round : ""}</b>
+        ${s.status ? `<span class="chip ${esc(s.status)}">${esc(s.status)}</span>` : ""}
+        <small class="muted">${dur(s.duration_s)}${s.tokens ? " · " + fmt(s.tokens) + " tokens" : ""}</small>
+        ${body.trim() ? '<span class="caret">▸</span>' : ""}
+        ${s.summary ? `<div class="ssum">${esc(s.summary)}</div>` : ""}
+      </div>
+      ${att ? `<div class="now"><b>${esc(att.title)}.</b> ${esc(att.explain)}
+        ${att.actions.map(a => `<div>Run <code>${esc(a.cmd)}</code>${a.note ? ` <span class="muted">to ${esc(a.note)}</span>` : ""}</div>`).join("")}</div>` : ""}
+      <div class="sbody">${body}</div></div>`;
+  }).join("");
+}
+function needsYouHtml(j) {
+  const h = j.help;
+  if (!h || !h.actions || !h.actions.length || ["done", "cancelled"].includes(j.status)) return "";
+  return `<div class="helpbox${j.status === "failed" ? " fail" : ""}"><b>${esc(h.title)}</b>${h.explain ? `<div class="muted">${esc(h.explain)}</div>` : ""}
+    ${h.actions.map(a => `<div>Run <code title="Click to copy" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.textContent)">${esc(a.cmd)}</code>${a.note ? ` <span class="muted">to ${esc(a.note)}</span>` : ""}</div>`).join("")}</div>`;
+}
+function alertsHtml(j) {
+  const need = needsYouHtml(j);
+  if (!j.alerts.length) return need;
+  const rows = j.alerts.slice().reverse().map(a => `<div class="alert ${esc(a.kind)}"><span class="k">${esc(a.kind)}</span><span>${esc(a.text)} <small class="muted">${esc(a.ts ? new Date(a.ts).toLocaleString() : "")}</small></span><button class="x" title="Clear" onclick="clearAlerts('${esc(j.id)}', ['${esc(a.id)}'])">×</button></div>`).join("");
+  return `<h3>Alerts <button class="secondary" style="float:right;padding:2px 8px" onclick="clearAlerts('${esc(j.id)}')">Clear all</button></h3>${need}${rows}`;
+}
+async function clearAlerts(job, ids) {
+  await api("/api/alerts/clear", {method: "POST", body: JSON.stringify({job, ids})});
+  await openJob(job); loadBoard();
 }
 async function openJob(id) {
   history.replaceState(null, "", "#job-" + id);
   const j = await api("/api/job?id="+encodeURIComponent(id));
-  const steps = j.timeline.map(s => `<div class="step"><h4>${esc(s.stage)}</h4>
-    <div class="meta">${dur(s.duration_s)} ${s.tokens ? "· "+fmt(s.tokens)+" tokens" : ""}</div>
-    ${s.agents.map(a => `<div class="meta">${esc(a.agent)}${a.reviewer ? " ("+esc(a.reviewer)+")" : ""} · ${esc(a.model||"")} · ${fmt(a.tokens)} tok${a.cache_read ? " · "+fmt(a.cache_read)+" cached" : ""} · ${dur(a.duration_s)}</div>`).join("")}
-    ${s.verdicts.map(v => `<div class="meta">${esc(v.reviewer||v.step)}: <b>${esc(v.verdict)}</b></div>`).join("")}</div>`).join("");
-  const sel = j.selections.map(s => `<tr><td>${esc(s.step)} r${esc(s.round)}</td><td>${esc(s.reviewer)}</td><td>${s.selected ? "ran" : "skipped"}</td><td class="muted">${esc(s.reason)}</td></tr>`).join("");
   const blocks = j.blocks.map(e => `<tr><td>${esc(e.type)}</td><td class="muted">${esc(e.detail||e.path||"")}</td></tr>`).join("");
+  const rw = ` of max ${j.max_rounds}`;
   document.getElementById("drawer-body").innerHTML = `
     <h2 style="margin-top:0">job-${esc(j.id)}: ${esc(j.title)}</h2>
-    <div class="muted">${esc(j.status)} · round ${j.round} · ${fmt(j.tokens)} / ${fmt(j.budget)} tokens · ${esc(j.branch)} ${j.pr ? "· <a href='"+esc(j.pr)+"' target=_blank>PR</a>" : ""}</div>
-    ${helpBox(j)}
+    <div class="muted">${esc(j.status)} · round ${j.round}${rw} · ${fmt(j.tokens)} / ${fmt(j.budget)} tokens · ${esc(j.branch)} ${j.pr ? "· <a href='"+esc(j.pr)+"' target=_blank>PR</a>" : ""}</div>
     ${j.source ? `<h3>Request</h3><pre class="md">${esc(j.source)}</pre>` : ""}
     <div class="muted">Created ${esc(j.created ? new Date(j.created).toLocaleString() : "")}${j.owner ? " by " + esc(j.owner) : ""}</div>
-    ${roundsHtml(j)}
-    <h3>Timeline</h3>${steps}
-    ${sel ? `<h3>Reviewers</h3><table><tr><th>Step</th><th>Reviewer</th><th></th><th>Why</th></tr>${sel}</table>` : ""}
+    ${alertsHtml(j)}
+    <h3>Timeline <small class="muted">click a step for details</small></h3>${timelineHtml(j)}
     ${blocks ? `<h3>Errors and guardrail blocks</h3><table>${blocks}</table>` : ""}
-    ${j.applied.length ? `<h3>Learnings applied</h3><p>${j.applied.map(esc).join(", ")}</p>` : ""}
-    <h3>Files</h3><div class="files">${j.files.map(f => `<a onclick="openFile('${esc(j.id)}','${esc(f)}')">${esc(f)}</a>`).join("")}</div>
-    <div id="file-view"></div>`;
+    ${j.applied.length ? `<h3>Learnings applied</h3><p>${j.applied.map(esc).join(", ")}</p>` : ""}`;
   document.getElementById("drawer").classList.add("open");
 }
-async function openFile(job, path) {
+async function openFile(job, path, i) {
   const t = await api(`/api/file?job=${encodeURIComponent(job)}&path=${encodeURIComponent(path)}`);
-  document.getElementById("file-view").innerHTML = `<h3>${esc(path)}</h3><pre class="md">${esc(t)}</pre>`;
+  document.getElementById("fv-" + i).innerHTML = `<h4>${esc(path)}</h4><pre class="md">${esc(typeof t === "string" ? t : (t.body || JSON.stringify(t)))}</pre>`;
 }
+document.addEventListener("mousedown", e => {
+  const d = document.getElementById("drawer");
+  if (d.classList.contains("open") && !d.contains(e.target) && !e.target.closest(".card, .addcard, #rv-add, [data-keep-drawer]")) closeDrawer();
+});
 function closeDrawer() { document.getElementById("drawer").classList.remove("open"); history.replaceState(null, "", location.pathname + location.search); }
 
 /* ---------------- Settings ---------------- */
@@ -278,26 +324,137 @@ function validRule(r) {
   return r.split(/\s+or\s+/).every(p => /^(always|never|touches-ui|risk\s*>=\s*(low|medium|high)|paths\s*:\s*\[.+\])$/.test(p.trim()));
 }
 
+
+/* ---- reviewers: files in .claude/reviewers/, summary list here, editor in the side panel ---- */
+const TYPES = {instructions: "Instructions", agent: "Agent", run: "Command"};
+const TRIGGERS = {spec: "Spec: reviews the spec before any code", review: "Review: after build and verify", merge: "Merge: on the final diff"};
+const rvKind = r => r.builtin ? "builtin" : r.agent != null ? "agent" : r.run != null ? "run" : "instructions";
+const rvMsg = (m, bad) => { const e = document.getElementById("err-reviewers"); if (e) { e.textContent = bad ? m : ""; } if (!bad) status(m); };
+async function rvReload() {   // refresh only the reviewer part, so unsaved settings edits are kept
+  const n = await api("/api/settings");
+  S.effective.reviewers = n.effective.reviewers; S.problems = n.problems; S.reviewers_mode = n.reviewers_mode;
+  rvRender();
+}
+const EDIT_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2.5l2.5 2.5L5.5 13H3v-2.5z"/></svg>';
+const DEL_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 8.5h6.6l.7-8.5"/></svg>';
+function rvRender() {
+  const files = S.reviewers_mode === "files", prob = Object.fromEntries((S.problems || []).map(p => [p.name, p]));
+  const rows = Object.entries(S.effective.reviewers).map(([n, r]) => {
+    const k = rvKind(r), off = r.when === "never" && !r.condition;
+    const type = k === "builtin" ? "Built-in /" + r.builtin : k === "run" ? "Command: " + r.run : TYPES[k];
+    const when = off ? "off" : [r.when || (r.condition ? "" : "always"), r.condition ? "or: " + r.condition : ""].filter(Boolean).join(" ");
+    return `<tr><td>${prob[n] ? `<span class="rv-err" title="${esc(prob[n].file + ": " + prob[n].error)}" onclick="status('${esc(prob[n].file)}: ${esc(prob[n].error)}')">⚠</span> ` : ""}<b>${esc(n)}</b>${prob[n] ? `<div class="rv-file rv-errtext" style="margin:0">${esc(prob[n].file)}</div>` : ""}</td><td class="muted">${esc(type.length > 40 ? type.slice(0, 40) + "…" : type)}</td>
+      <td>${esc(r.at || "review")}${r.blocking === false ? ' <span class="muted">advisory</span>' : ""}</td>
+      <td class="muted" title="${esc(when)}">${esc(when.length > 70 ? when.slice(0, 70) + "…" : when)}</td>
+      <td class="rv-act"><a title="Edit" onclick="rvEdit('${esc(n)}')">${EDIT_ICON}</a><a class="del" title="Delete" onclick="rvRemove('${esc(n)}')">${DEL_ICON}</a></td></tr>`;
+  }).join("");
+  const banner = "";
+  const bad = (S.problems || []).filter(p => !S.effective.reviewers[p.name]).map(p => `<tr><td><span class="rv-err" title="${esc(p.error)}" onclick="status('${esc(p.file)}: ${esc(p.error)}')">⚠</span> <b>${esc(p.name)}</b></td>
+      <td colspan="3" class="muted"><span class="rv-file">${esc(p.file)}</span> <span class="rv-errtext">${esc(p.error)}</span></td><td></td></tr>`).join("");
+  document.getElementById("rv-list").innerHTML = `${banner}
+    <table><tr><th>Name</th><th>Type</th><th>Trigger</th><th>When</th><th></th></tr>${rows}${bad}</table>`;
+}
+const rvTemplate = (kind, n) => kind === "agent" ? S.agent_template.replaceAll("{{name}}", n || "<name>") : S.reviewer_template.replace("<Name>", n || "<Name>");
+let EDIT = null;   // the open editor: {name, kind, buf: {instructions, agent, run, builtin}}
+async function rvEnsureFiles() {   // inline reviewers are converted to files the first time one is edited
+  if (S.reviewers_mode === "files") return true;
+  if (!confirm("Reviewers are still written inline in SDLC.md. Convert them to files in .claude/reviewers/ first? (Your SDLC.md and those files will have uncommitted changes.)")) return false;
+  try { const r = await api("/api/reviewers/convert", {method: "POST", body: "{}"}); await rvReload(); status(`Converted: ${r.created.length} file(s) written`); return true; }
+  catch (e) { rvMsg(e.message, true); return false; }
+}
+async function rvEdit(name) {
+  if (!(await rvEnsureFiles())) return;
+  const r = name ? S.effective.reviewers[name] : {}, k = name ? rvKind(r) : "instructions";
+  EDIT = {name, kind: k, buf: {instructions: null, agent: null, run: r.run || "", builtin: r.body || ""}};
+  if (k === "instructions" && name) EDIT.buf.instructions = r.body || "";
+  if (k === "agent") EDIT.buf.agent = (await api("/api/reviewer?name=" + encodeURIComponent(name))).content || rvTemplate("agent", r.agent);
+  const row = (label, html, help) => `<div class="field" style="grid-template-columns:110px 1fr"><label>${label}</label><div>${html}${help ? `<div class="help">${help}</div>` : ""}</div></div>`;
+  const opt = (o, cur, label) => `<option value="${esc(o)}" ${o === cur ? "selected" : ""}>${esc(label || o)}</option>`;
+  const at = r.at || "review", builtin = k === "builtin";
+  document.getElementById("drawer-body").innerHTML = `<h2 style="margin-top:0">${name ? "Edit reviewer: " + esc(name) : "Add reviewer"}</h2>
+    ${name ? "" : row("Name", `<input id="rv-name" placeholder="e.g. a11y" oninput="rvNameChanged()">`, "Letters, digits, - and _. Becomes .claude/reviewers/&lt;name&gt;.md")}
+    ${builtin ? row("Type", `<span class="muted">Built-in /${esc(r.builtin)}; it uses REVIEW.md</span>`) :
+      row("Type", `<select id="rv-kind" onchange="rvKindChanged()">${Object.entries(TYPES).map(([o, l]) => opt(o, k, l)).join("")}</select>`)}
+    ${row("Trigger", `<select id="rv-at">${Object.entries(TRIGGERS).map(([o, l]) => opt(o, at, l)).join("")}${!TRIGGERS[at] ? opt(at, at) : ""}</select>`, "When in the pipeline this reviewer runs")}
+    ${row("When", `<textarea id="rv-when" rows="2" placeholder="always">${esc(r.when || "")}</textarea>`, "always, never, touches-ui, risk>=medium, paths:[globs], joined with 'or'")}
+    ${row("Condition", `<textarea id="rv-cond" rows="3" placeholder="plain-language condition">${esc(r.condition || "")}</textarea>`, "Judged per job; the reviewer runs if When matches or this is true")}
+    ${row("<span id='rv-vlabel'></span>", `<textarea id="rv-val" rows="14" spellcheck="false" oninput="EDIT.buf[EDIT.kind] = this.value"></textarea>`, "<span id='rv-vhelp'></span><div id='rv-path'></div>")}
+    ${row("Blocking", `<label><input type="checkbox" id="rv-block" ${r.blocking === false ? "" : "checked"} style="width:auto"> findings block merging (off = advisory)</label>`)}
+    <div id="rv-model-row">${row("Model", `<select id="rv-model"><option value="">default</option>${["opus", "sonnet", "haiku", "fable"].map(o => opt(o, r.model)).join("")}</select>`, "Which model runs this reviewer; default follows the models.reviewer setting")}</div>
+    ${r.builtin === "code-review" ? row("Effort", `<select id="rv-effort">${["low", "medium", "high", "xhigh", "max"].map(o => opt(o, r.effort || "high")).join("")}</select>`, "How hard /code-review looks") : ""}
+    <div class="err" id="rv-err"></div>
+    <div class="actions"><button class="primary" onclick="rvSave()">Save</button> <button class="secondary" onclick="closeDrawer()">Cancel</button></div>`;
+  rvKindChanged(true);
+  document.getElementById("drawer").classList.add("open");
+}
+function rvNameChanged() {
+  if (EDIT.name) return;
+  const n = document.getElementById("rv-name").value.trim();
+  for (const k of ["instructions", "agent"]) if (EDIT.buf[k] === null || EDIT.buf[k] === EDIT.tpl?.[k]) {
+    EDIT.buf[k] = rvTemplate(k, n); EDIT.tpl = {...(EDIT.tpl || {}), [k]: EDIT.buf[k]};
+  }
+  const ta = document.getElementById("rv-val"); if (ta && (EDIT.kind === "instructions" || EDIT.kind === "agent")) ta.value = EDIT.buf[EDIT.kind];
+  rvPathNote();
+}
+function rvPathNote() {
+  const el = document.getElementById("rv-path"), k = EDIT.kind; if (!el) return;
+  const n = (EDIT.name || (document.getElementById("rv-name") || {}).value || "").trim() || "<name>", cur = EDIT.name && S.effective.reviewers[EDIT.name];
+  el.innerHTML = k === "run" ? "" : `<span class="muted">Stored in ${esc(k === "agent" ? `.claude/agents/${(cur && cur.agent) || n}.md` : (cur && cur.file) || `.claude/reviewers/${n}.md`)}</span>`;
+}
+function rvKindChanged(first) {
+  const sel = document.getElementById("rv-kind"); if (sel) EDIT.kind = sel.value;
+  const k = EDIT.kind, n = EDIT.name || (document.getElementById("rv-name") || {}).value || "";
+  if ((k === "instructions" || k === "agent") && EDIT.buf[k] === null) { EDIT.buf[k] = rvTemplate(k, n.trim()); EDIT.tpl = {...(EDIT.tpl || {}), [k]: EDIT.buf[k]}; }
+  const ta = document.getElementById("rv-val");
+  ta.rows = k === "run" ? 2 : 14; ta.style.fontFamily = k === "run" ? "" : "ui-monospace,Menlo,monospace"; ta.style.fontSize = k === "run" ? "" : "12px"; ta.value = EDIT.buf[k] || "";
+  document.getElementById("rv-vlabel").textContent = {instructions: "Instructions", agent: "Agent", run: "Command", builtin: "Extra instructions"}[k];
+  document.getElementById("rv-vhelp").textContent = {instructions: "What to check, what is Important vs Nit, and what to ignore. Starts from a template with the right sections.",
+    agent: "A Claude Code subagent definition (frontmatter: name, description, tools; then its prompt). Use it when the reviewer needs different tools than read-only.",
+    run: "Shell command run in the job's worktree: exit 0 = pass, anything else = changes. No tokens used.",
+    builtin: "Optional. Added to the built-in review as extra instructions, on top of REVIEW.md."}[k];
+  rvPathNote();
+  document.getElementById("rv-model-row").style.display = k === "run" ? "none" : "";
+}
+async function rvSave() {
+  const $ = id => document.getElementById(id), err = m => { $("rv-err").textContent = m; };
+  const orig = EDIT.name ? S.effective.reviewers[EDIT.name] : {}, k = EDIT.kind;
+  const name = EDIT.name || $("rv-name").value.trim(), text = $("rv-val").value;
+  const clean = v => v.trim().replace(/\s*\n\s*/g, " ");
+  const front = {at: $("rv-at").value, when: clean($("rv-when").value), condition: clean($("rv-cond").value), blocking: $("rv-block").checked};
+  if (!validRule(front.when)) return err("When: not a valid rule");
+  if (k !== "run" && $("rv-model").value) front.model = $("rv-model").value;
+  if ($("rv-effort")) front.effort = $("rv-effort").value;
+  for (const f of ["timeout"]) if (orig[f] != null) front[f] = orig[f];
+  let body = text, agent_content;
+  if (k === "builtin") front.builtin = orig.builtin;
+  else if (k === "run") { front.run = text.trim(); body = ""; }
+  else if (k === "agent") { front.agent = orig.agent || name; agent_content = text; body = `Uses the \`${front.agent}\` subagent defined in .claude/agents/${front.agent}.md.`; }
+  try {
+    await api("/api/reviewer/save", {method: "POST", body: JSON.stringify({name, front, body, agent_content})});
+    closeDrawer(); await rvReload(); rvMsg("Saved " + name + ". The file has uncommitted changes: commit it when you're ready.");
+  } catch (e) { err(e.message); }
+}
+async function rvRemove(n) {
+  if (!(await rvEnsureFiles())) return;
+  if (!confirm(`Remove reviewer "${n}" from SDLC.md? Its file stays on disk.`)) return;
+  try { await api("/api/reviewer/delete", {method: "POST", body: JSON.stringify({name: n})}); await rvReload(); rvMsg("Removed " + n); }
+  catch (e) { rvMsg(e.message, true); }
+}
+async function rvConvert() {
+  try { const r = await api("/api/reviewers/convert", {method: "POST", body: "{}"}); await rvReload(); rvMsg(`Converted: ${r.created.length} file(s) written in .claude/reviewers/`); }
+  catch (e) { rvMsg(e.message, true); }
+}
+
 async function loadSettings() {
   S = await api("/api/settings"); changes = {};
   const groups = S.schema.groups.map(g => `<div class="group"><h3>${esc(g.title)}</h3>${g.fields.map(f => `
     <div class="field" id="row-${f.path}"><label>${esc(f.path)}${isSet(S.overrides, f.path) ? '<span class="ov">overridden</span>' : ""}</label>
     <div>${inputFor(f, S.effective)}<div class="help">${esc(f.help)}${f.usage === "month" ? " · used this month: "+fmt(S.usage.month) : ""}${f.additive ? " · built-in: "+esc((get(S.defaults, f.path)||[]).join(", ")) : ""}</div><div class="err" id="err-${f.path}"></div></div></div>`).join("")}</div>`).join("");
-  const rv = Object.entries(S.effective.reviewers).map(([n, r]) => {
-    const kind = r.builtin ? "built-in: /"+r.builtin : r.instructions ? "instructions: "+r.instructions : r.agent ? "agent: "+r.agent : "run: "+r.run;
-    return `<tr><td>${esc(n)}</td><td class="muted">${esc(kind)}</td>
-      <td><input data-rpath="reviewers.${esc(n)}.at" value="${esc(r.at||"review")}" size="7"></td>
-      <td><input data-rpath="reviewers.${esc(n)}.when" value="${esc(r.when||"")}" placeholder="always"></td>
-      <td><input data-rpath="reviewers.${esc(n)}.condition" value="${esc(r.condition||"")}" placeholder="plain-language condition"></td>
-      <td><input type="checkbox" data-rpath="reviewers.${esc(n)}.blocking" ${r.blocking === false ? "" : "checked"}></td></tr>`;
-  }).join("");
-  const entries = (list, actions) => list.length ? list.map(e => `<div class="entry"><code>${esc(e.id)}</code><span>${esc(e.roles.join(", "))} · ${esc(e.text)}</span>${actions ? `<button class="secondary" onclick="learning('accept','${e.id}')">Accept</button><button class="secondary" onclick="learning('reject','${e.id}')">Reject</button>` : ""}</div>`).join("") : '<span class="muted">None</span>';
+  const entries = list => list.length ? list.map(e => `<div class="entry" id="en-${esc(e.id)}"><code>${esc(e.id)}</code><span style="flex:1">${esc(e.roles.join(", "))} · ${esc(e.text)}</span><a class="ia" title="Edit" onclick="editLearning('${esc(e.id)}')">${EDIT_ICON}</a><a class="ia del" title="Delete" onclick="delLearning('${esc(e.id)}')">${DEL_ICON}</a></div>`).join("") : '<span class="muted">None</span>';
   document.getElementById("settings-view").innerHTML = `${groups}
-    <div class="group"><h3>Reviewers</h3><table><tr><th>Name</th><th>Kind</th><th>At</th><th>When</th><th>Condition</th><th>Blocking</th></tr>${rv}</table>
-      <div class="help muted" style="margin-top:6px">Add reviewers with /sdlc:add-reviewer (see the Help tab); edit when they run here.</div><div class="err" id="err-reviewers"></div></div>
-    <div class="group"><h3>Pending proposals</h3>${entries(S.pending.Proposals||[], true)}</div>
-    <div class="group"><h3>Pending learnings and answers</h3>${entries([...(S.pending.Learnings||[]), ...(S.pending.Answers||[])], false)}</div>
-    <div class="group"><h3>Learnings in SDLC.md</h3>${entries(S.learnings.Learnings||[], false)}<h3 style="margin-top:12px">Answers in SDLC.md</h3>${entries(S.learnings.Answers||[], false)}</div>
+    <div class="group"><h3>Reviewers <button class="secondary" id="rv-add" style="float:right" onclick="rvEdit(null)">+ Add reviewer</button></h3>
+      <div id="rv-list"></div><div class="err" id="err-reviewers"></div></div>
+    <div class="group"><h3>Learnings</h3>${entries(S.learnings.Learnings||[])}<h3 style="margin-top:12px">Answers</h3>${entries(S.learnings.Answers||[])}</div>
     <div class="actions"><button class="primary" onclick="preview()">Review changes</button><span class="muted" id="status"></span></div>
     <div id="diff"></div>`;
   document.querySelectorAll("[data-path]").forEach(el => el.addEventListener("input", () => {
@@ -307,11 +464,7 @@ async function loadSettings() {
     err.textContent = el.dataset.type === "gate" && typeof v === "object" && !validRule(v.human_when) ? "Not a valid rule" :
                       el.dataset.type === "gate" && typeof v === "string" && !["auto","human"].includes(v) ? "auto, human, or human_when: <rule>" : "";
   }));
-  document.querySelectorAll("[data-rpath]").forEach(el => el.addEventListener("input", () => {
-    const p = el.dataset.rpath; const v = el.type === "checkbox" ? el.checked : (el.value.trim() || null);
-    changes[p] = v;
-    document.getElementById("err-reviewers").textContent = p.endsWith(".when") && !validRule(v) ? `${p}: not a valid rule` : "";
-  }));
+  rvRender();
 }
 
 async function preview() {
@@ -323,6 +476,7 @@ async function preview() {
     const lines = b.map(l => a.includes(l) ? esc(l) : `<span class="add">+ ${esc(l)}</span>`)
       .concat(a.filter(l => !b.includes(l)).map(l => `<span class="del">- ${esc(l)}</span>`));
     document.getElementById("diff").innerHTML = `<h3>Changes to SDLC.md</h3><div class="diff">${lines.join("\n")}</div>
+      ${(r.writes || []).length ? `<p class="muted">Will also write: ${r.writes.map(w => esc(w.path) + (w.new ? " (new)" : " (changed)")).join(", ")}</p>` : ""}
       <div class="actions"><button class="primary" onclick="save()">Save</button><button class="secondary" onclick="loadSettings()">Discard</button></div>`;
   } catch (e) { status(e.message); }
 }
@@ -332,8 +486,22 @@ async function save() {
     await loadSettings(); status("Saved. SDLC.md has uncommitted changes: commit them when you're ready.");
   } catch (e) { status(e.message); if (e.message.includes("changed on disk")) setTimeout(loadSettings, 1500); }
 }
-async function learning(action, id) {
-  try { await api("/api/learnings", {method: "POST", body: JSON.stringify({action, ids: [id]})}); await loadSettings(); }
+function editLearning(id) {
+  const e = [...(S.learnings.Learnings || []), ...(S.learnings.Answers || [])].find(x => x.id === id), row = document.getElementById("en-" + id);
+  row.innerHTML = `<code>${esc(id)}</code><span style="flex:1;display:flex;flex-direction:column;gap:6px">
+    <input id="el-roles" value="${esc(e.roles.join(", "))}" placeholder="roles (comma-separated, or all)">
+    <textarea id="el-text" rows="3">${esc(e.text)}</textarea></span>
+    <button class="primary" onclick="saveLearning('${esc(id)}')">Save</button><button class="secondary" onclick="loadSettings()">Cancel</button>`;
+  document.getElementById("el-text").focus();
+}
+async function saveLearning(id) {
+  const roles = document.getElementById("el-roles").value.split(",").map(x => x.trim()).filter(Boolean), text = document.getElementById("el-text").value;
+  try { await api("/api/learnings/update", {method: "POST", body: JSON.stringify({id, roles, text})}); await loadSettings(); }
+  catch (e) { status(e.message); }
+}
+async function delLearning(id) {
+  if (!confirm("Delete " + id + "?")) return;
+  try { await api("/api/learnings/delete", {method: "POST", body: JSON.stringify({id})}); await loadSettings(); }
   catch (e) { status(e.message); }
 }
 function status(t) { document.getElementById("status").textContent = t; }
@@ -352,11 +520,36 @@ function show(tab) {
 document.getElementById("tab-board").onclick = () => show("board");
 document.getElementById("tab-settings").onclick = () => show("settings");
 document.getElementById("tab-help").onclick = () => show("help");
+function md(src) {
+  const inl = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  const cells = l => l.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, "|"));
+  const L = src.split("\n"), out = []; let i = 0;
+  while (i < L.length) {
+    const l = L[i];
+    if (/^```/.test(l)) { const b = []; i++; while (i < L.length && !/^```/.test(L[i])) b.push(L[i++]); i++; out.push(`<pre><code>${esc(b.join("\n"))}</code></pre>`); continue; }
+    let m = l.match(/^(#{1,3})\s+(.*)/);
+    if (m) { out.push(`<h${m[1].length}>${inl(m[2])}</h${m[1].length}>`); i++; continue; }
+    if (/^\|/.test(l) && /^\|[\s:|-]+\|?\s*$/.test(L[i + 1] || "")) {
+      const head = cells(l); i += 2; const rows = [];
+      while (i < L.length && /^\|/.test(L[i])) rows.push(cells(L[i++]));
+      out.push(`<table><tr>${head.map(c => `<th>${inl(c)}</th>`).join("")}</tr>${rows.map(r => `<tr>${r.map(c => `<td>${inl(c)}</td>`).join("")}</tr>`).join("")}</table>`); continue;
+    }
+    if (/^\s*([-*]|\d+\.)\s/.test(l)) {
+      const tag = /^\s*\d+\./.test(l) ? "ol" : "ul", items = [];
+      while (i < L.length && /^\s*([-*]|\d+\.)\s/.test(L[i])) items.push(L[i++].replace(/^\s*([-*]|\d+\.)\s+/, ""));
+      out.push(`<${tag}>${items.map(x => `<li>${inl(x)}</li>`).join("")}</${tag}>`); continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const p = []; while (i < L.length && L[i].trim() && !/^(```|#|\||\s*([-*]|\d+\.)\s)/.test(L[i])) p.push(L[i++]);
+    out.push(`<p>${inl(p.join(" "))}</p>`);
+  }
+  return out.join("\n");
+}
 async function loadHelp() {
   const el = document.getElementById("help-text");
-  if (el.textContent) return;
+  if (el.innerHTML) return;
   const r = await fetch("/api/help", {headers: {"X-SDLC-Token": TOKEN}});
-  el.textContent = await r.text();
+  el.innerHTML = md(await r.text());
 }
 loadBoard().then(() => { const m = location.hash.match(/^#job-(\w+)$/); if (m) openJob(m[1]); })
   .catch(e => document.getElementById("board").textContent = e.message);

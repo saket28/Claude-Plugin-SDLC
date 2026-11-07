@@ -28,27 +28,9 @@ def parse_entries(text):
     return out
 
 
-def pending_sections(cfg):
-    p = cfg.work_dir / "learnings-pending.md"
-    if not p.exists():
-        return {}
-    sections, cur, buf = {}, None, []
-    for line in p.read_text().splitlines():
-        if line.startswith("## "):
-            if cur:
-                sections[cur] = "\n".join(buf)
-            cur, buf = line[3:].strip(), []
-        elif cur:
-            buf.append(line)
-    if cur:
-        sections[cur] = "\n".join(buf)
-    return sections
-
-
 def role_learnings(cfg, role):
     body = cfg.body_sections()
-    pend = pending_sections(cfg)
-    entries = parse_entries(body.get("Learnings", "")) + parse_entries(pend.get("Learnings", ""))
+    entries = parse_entries(body.get("Learnings", ""))
     seen, out = set(), []
     for e in entries:
         if e["id"] in seen:
@@ -61,8 +43,7 @@ def role_learnings(cfg, role):
 
 def answers(cfg):
     body = cfg.body_sections()
-    pend = pending_sections(cfg)
-    return [e["line"] for e in parse_entries(body.get("Answers", "")) + parse_entries(pend.get("Answers", ""))]
+    return [e["line"] for e in parse_entries(body.get("Answers", ""))]
 
 
 def write(cfg, path, meta, role, sections):

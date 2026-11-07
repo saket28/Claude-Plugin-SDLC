@@ -8,4 +8,9 @@ allowed-tools: Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" *)
 
 !`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" rework $ARGUMENTS || true`
 
-Confirm in one line, then ask whether to continue the job now with /sdlc:start <job-id>.
+Confirm in one line, then continue the job now (the user just gave the feedback, so don't ask)
+by running the loop below for that job, starting at its step 1.
+
+In the loop, `<plugin-root>` is `${CLAUDE_PLUGIN_ROOT}` and `<session-id>` is `${CLAUDE_SESSION_ID}`.
+
+!`cat "${CLAUDE_PLUGIN_ROOT}/reference/run-loop.md"`

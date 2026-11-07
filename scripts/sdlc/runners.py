@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import usage, yamlish
+from . import reviewers as reviewers_mod, usage, yamlish
 
 TAIL = 60   # lines of command output kept in artifacts (keeps briefs small)
 
@@ -205,7 +205,9 @@ def findings_artifact(name, engine, findings, out_path, blocking=True, raw=""):
 def builtin_review(cfg, name, spec, worktree, base, out_path):
     review_md = cfg.root / "REVIEW.md"
     rules = review_md.read_text() if review_md.exists() else ""
-    system = ("Repository review rules (REVIEW.md):\n" + rules + "\n" if rules else "") + FINDINGS_FORMAT
+    extra = reviewers_mod.extra_instructions(spec)      # the reviewer file's own text, if any
+    system = (("Repository review rules (REVIEW.md):\n" + rules + "\n" if rules else "") +
+              ("Extra instructions for this review:\n" + extra + "\n" if extra else "") + FINDINGS_FORMAT)
     if spec["builtin"] == "code-review":
         prompt = f"/code-review {spec.get('effort', 'high')} {base}...HEAD"
     else:

@@ -18,7 +18,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from . import adapters, briefs, rules, runners, usage, yamlish
+from . import adapters, briefs, reviewers as reviewers_mod, rules, runners, usage, yamlish
 from .config import git
 from .store import Store
 
@@ -203,8 +203,12 @@ class Pipeline:
                                            "agent": agent, "output": str(output),
                                            "worktree": str(self.wt), **meta}, role, sections)
             self.ev("spawn", key=key, agent=agent, output=str(output), attempt=st.spawns.get(key, 0) + 1)
-            out.append({"agent": agent, "key": key, "output": str(output),
-                        "prompt": briefs.prompt_line(self.job_id, stage, rnd, brief)})
+            entry = {"agent": agent, "key": key, "output": str(output),
+                     "prompt": briefs.prompt_line(self.job_id, stage, rnd, brief)}
+            model = meta.get("model") or self.cfg["models"].get(role)
+            if model and model != "inherit":
+                entry["model"] = model               # the orchestrator passes this to the Agent tool
+            out.append(entry)
         self.link_session(spawned=[{"agent": o["agent"], "output": o["output"]} for o in out],
                           stage=stage, rnd=rnd)
         return {"action": "spawn", "job": self.job_id, "agents": out,
@@ -236,7 +240,7 @@ class Pipeline:
     # ------------------------------------------------------------ rounds --
     def new_round(self, reason, step, detail=""):
         st = self.state()
-        if st.auto_rounds >= self.cfg["max_rounds"]:
+        if st.auto_rounds + 1 >= self.cfg["max_rounds"]:      # +1: the first build is a round too
             history = [f"round {e['n']}: {e.get('reason')}" for e in st.events
                        if e["type"] == "round" and e.get("auto")]
             return self.needs_human("max-rounds", step,
@@ -314,7 +318,7 @@ class Pipeline:
         return None
 
     def _spec_changes(self, st, failing):
-        if st.spec_revisions >= self.cfg["max_rounds"]:
+        if st.spec_revisions + 1 >= self.cfg["max_rounds"]:
             return self.needs_human("spec-max", "spec", ", ".join(failing))
         self.ev("spec_rev", n=st.spec_rev + 1, counts=True, reason="review: " + ", ".join(failing))
         return None
@@ -443,7 +447,7 @@ class Pipeline:
                             "output": str(out), "format": "reference/formats.md#reviews"}
             else:
                 agent = spec.get("agent") or AGENT_FOR["reviewer"]
-                sections = [("Review instructions", (self.cfg.root / spec["instructions"]).read_text())
+                sections = [("Review instructions", reviewers_mod.instructions_text(self.cfg.root, spec))
                             if "instructions" in spec else None,
                             ("Spec", (self.dir / "spec.md").read_text())]
                 if step != "spec":
@@ -456,7 +460,8 @@ class Pipeline:
                 if prev.exists():
                     sections.append(("Your previous review", prev.read_text()))
                 spawns.append((f"{step}-{name}-r{rnd}", agent, "reviewer",
-                               {"reviewer": name, "blocking": spec.get("blocking", True)},
+                               {"reviewer": name, "blocking": spec.get("blocking", True),
+                                **({"model": spec["model"]} if spec.get("model") else {})},
                                [s for s in sections if s], out))
         if spawns:
             return self.spawn(spawns, "review" if step == "review" else step, rnd)
@@ -558,7 +563,7 @@ class Pipeline:
                 if r.get("conflict"):
                     return self.new_round("merge conflict with " + self.base, "merge")
                 return self._wait("branch updated; waiting for CI", self.meta["pr"], waiter=self.waiter("ci"))
-            r = self.host.call("merge", branch=self.meta["branch"])
+            r = self.host.call("merge", branch=self.meta["branch"], strategy=self.cfg["merge_strategy"])
             if not r.get("merged"):
                 return self._wait(f"merge refused: {r.get('reason')}", f"Check {self.meta['pr']}",
                                   waiter=self.waiter("approval"))
@@ -578,7 +583,9 @@ class Pipeline:
         if not final.exists() and not runners.verify(self.cfg, self.wt, final):
             final.rename(rd / "verify-final-failed.md")
             return self.new_round("verify failed after rebase", "merge")
-        r = self.host.call("merge", branch=self.meta["branch"], base=self.base)
+        r = self.host.call("merge", branch=self.meta["branch"], base=self.base,
+                           strategy=self.cfg["merge_strategy"],
+                           message=f"{self.meta['title']} (job-{self.job_id})")
         if not r.get("merged"):
             return self._wait(f"cannot merge yet: {r.get('reason')}",
                               f"Fix that, then /sdlc:start {self.job_id}")

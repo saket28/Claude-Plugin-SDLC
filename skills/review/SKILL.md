@@ -16,10 +16,11 @@ and stop. Otherwise start all reviewers **in parallel** (one message, several ca
 (`verdict: PASS|CHANGES`, `## Important`, `## Nit`). Never modify the code under review.
 
 By `kind`:
-- `builtin` / `code-review`: run the `code-review` skill on `<base>...HEAD` (REVIEW.md applies when `has_review_md`).
-- `builtin` / `security-review`: run the `security-review` skill.
-- `instructions`: spawn the `sdlc:reviewer` agent. Its prompt: the contents of the instructions
-  file `target`, the diff command `git diff <base>...HEAD`, and the `output` path. No spec exists, so
+- `builtin` / `code-review`: run the `code-review` skill on `<base>...HEAD` (REVIEW.md applies when
+  `has_review_md`; any text in the reviewer file's body is extra instructions).
+- `builtin` / `security-review`: run the `security-review` skill (same REVIEW.md and extra-instruction rules).
+- `instructions`: spawn the `sdlc:reviewer` agent. Its prompt: the instructions in the file
+  `target` (its frontmatter is settings, the body is the instructions), the diff command `git diff <base>...HEAD`, and the `output` path. No spec exists, so
   judge the change on its own merits.
 - `agent`: spawn the named project agent with the same prompt.
 - `run`: run the command `target` with Bash. Exit 0 = PASS, otherwise CHANGES with the output tail.

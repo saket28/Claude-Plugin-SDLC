@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -98,7 +99,7 @@ class PipelineTest(unittest.TestCase):
         os.environ.pop("FAKE_REVIEW", None)
         os.environ.pop("FAKE_JUDGE", None)
 
-    def repo(self, merge_gate="human", max_rounds=2, extra="", files=None):
+    def repo(self, merge_gate="human", max_rounds=3, extra="", files=None):
         repo = make_repo(BASE_MD.format(merge_gate=merge_gate, max_rounds=max_rounds, extra=extra), files)
         self.addCleanup(shutil.rmtree, repo.parent, ignore_errors=True)
         return repo, config.load(repo)
@@ -127,8 +128,36 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(any(e["agent"] == "headless:code" for e in usage))
         self.assertGreater(Store(cfg).month_tokens(), 0)
 
+    def _merged_commits(self, extra):
+        repo, cfg = self.repo(merge_gate="auto", extra=extra)
+        job = self.new_job(cfg)
+        self.assertEqual(drive(cfg, job, Agents())["action"], "done")
+        msgs = sh("git log --format=%s main", repo).split("\n")
+        branch = Store(cfg).load_job(job)["branch"]
+        return repo, [m for m in msgs if m], branch
+
+    def test_merge_strategy_squash_is_default_and_one_commit(self):
+        repo, msgs, _ = self._merged_commits("")
+        self.assertEqual(len(msgs), 2)                       # init + one squash commit
+        self.assertIn("(job-", msgs[0])
+
+    def test_merge_strategy_rebase_keeps_commits_and_merge_makes_merge_commit(self):
+        repo, msgs, branch = self._merged_commits("merge_strategy: rebase")
+        tip = subprocess.run(["git", "rev-parse", "main", branch], cwd=repo, capture_output=True, text=True).stdout.split()
+        self.assertEqual(tip[0], tip[1])                      # main is the job branch, nothing rewritten
+        repo, msgs, branch = self._merged_commits("merge_strategy: merge")
+        parents = subprocess.run(["git", "log", "-1", "--format=%P", "main"], cwd=repo, capture_output=True, text=True).stdout.split()
+        self.assertEqual(len(parents), 2)
+
+    def test_spawn_carries_the_configured_model(self):
+        repo, cfg = self.repo(extra="models: { spec-writer: haiku }\nreviewers:\n  arch: { run: \"true\" }")
+        job = self.new_job(cfg)
+        act = pipeline.Pipeline(cfg, job).next_action()
+        self.assertEqual(act["action"], "spawn")
+        self.assertEqual(act["agents"][0]["model"], "haiku")
+
     def test_review_changes_hit_max_rounds_then_override(self):
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=1)
+        repo, cfg = self.repo(merge_gate="auto", max_rounds=2)
         job = self.new_job(cfg)
         agents = Agents()
         agents.review_verdict = "CHANGES"
@@ -136,7 +165,7 @@ class PipelineTest(unittest.TestCase):
         act = drive(cfg, job, agents)
         self.assertEqual(act["action"], "wait")
         self.assertIn("max-rounds", act["reason"])
-        self.assertEqual(agents.calls.count("sdlc:builder"), 2)                # 1 + max_rounds
+        self.assertEqual(agents.calls.count("sdlc:builder"), 2)                # max_rounds total builds
         pipeline.approve(cfg, job, "override")
         act = drive(cfg, job, agents)
         self.assertEqual(act["action"], "done", act)
@@ -217,7 +246,7 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(sel[0]["selected"])
 
     def test_run_reviewer_at_merge_blocks(self):
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=0,
+        repo, cfg = self.repo(merge_gate="auto", max_rounds=1,
                               extra="reviewers:\n  lic: { run: \"exit 3\", at: merge }")
         job = self.new_job(cfg)
         act = drive(cfg, job, Agents())
@@ -225,7 +254,7 @@ class PipelineTest(unittest.TestCase):
 
     def test_native_code_review_output_is_parsed_and_classified(self):
         # live run 1: /code-review returns a bare list without severities
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=0)
+        repo, cfg = self.repo(merge_gate="auto", max_rounds=1)
         os.environ["FAKE_REVIEW"] = "native"
         job = self.new_job(cfg)
         act = drive(cfg, job, Agents())
@@ -259,7 +288,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(agents.calls.count("sdlc:builder"), 1)
 
     def test_max_rounds_message_lists_every_round_reason(self):
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=1)
+        repo, cfg = self.repo(merge_gate="auto", max_rounds=2)
         agents = Agents()
         agents.test_verdict = "FAIL"
         act = drive(cfg, self.new_job(cfg), agents)
@@ -279,14 +308,14 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(int(j2), int(j1) + 1)                              # number never reused
         self.assertEqual(drive(cfg, j2, Agents())["action"], "done")
 
-    def test_retro_adds_pending_learnings_and_briefs_use_them(self):
+    def test_retro_writes_learnings_to_sdlc_md_and_briefs_use_them(self):
         repo, cfg = self.repo(merge_gate="auto")
         job = self.new_job(cfg)
         drive(cfg, job, Agents())
         res = learn.retro(cfg, job)
         self.assertEqual(len(res["added"]), 1)
         self.assertIn("seed script", res["added"][0])
-        self.assertIn("Run the seed script", (repo / "SDLC.md").read_text())  # local host: committed
+        self.assertIn("Run the seed script", (repo / "SDLC.md").read_text())  # written to SDLC.md, not committed
         self.assertEqual(learn.retro(cfg, job), {"skipped": "retro already ran"})
         cfg2 = config.load(repo)
         j2 = self.new_job(cfg2, "Second")

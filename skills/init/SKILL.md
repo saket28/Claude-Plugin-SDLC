@@ -18,7 +18,7 @@ Detected so far:
    `! gh auth login` themselves. If they decline, the host becomes `local`.
 3. Write the settings that differ from the defaults (only those) as JSON to a temp file, for
    example `{"commands": {...}, "test_paths": [...], "host": {"adapter": "local"}}`, and run
-   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" init --write <file>`. Record each answer the user gave under `## Answers` in SDLC.md
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" init --write <file>`. It also creates `.claude/reviewers/code.md` and `security.md` (the built-in reviewers) and lists them in SDLC.md. Record each answer the user gave under `## Answers` in SDLC.md
    as `- [A-xxxx] all · Question? Answer. (init)`.
 4. Offer to turn on Claude Code's Bash sandbox in the user's settings, explaining that it limits
    where agents' shell commands can write. Only change settings if they agree.

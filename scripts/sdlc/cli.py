@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import adapters, config as config_mod, hooks, learn, pipeline, runners, yamlish
+from . import adapters, config as config_mod, hooks, learn, pipeline, reviewers as reviewers_mod, runners, yamlish
 from .store import Store
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -71,9 +71,11 @@ def cmd_init(a):
     sdlc_md = root / "SDLC.md"
     if not sdlc_md.exists():
         tmpl = (PLUGIN_ROOT / "templates" / "SDLC.md").read_text()
-        _, body = yamlish.parse_frontmatter(tmpl)
-        sdlc_md.write_text("---\n" + yamlish.dumps(settings) + "\n---\n" + body if settings else tmpl)
-        created = ["SDLC.md"]
+        front, body = yamlish.split_frontmatter(tmpl)
+        comments = "".join(l for l in front.splitlines(keepends=True) if l.lstrip().startswith("#"))
+        settings = {**settings, "reviewers": reviewers_mod.ensure_defaults(root)}   # code + security as files
+        sdlc_md.write_text("---\n" + comments + yamlish.dumps(settings) + "\n---\n" + body)
+        created = ["SDLC.md"] + reviewers_mod.ensure_defaults(root)
     else:
         created = []
     if not (root / "REVIEW.md").exists():
@@ -110,10 +112,6 @@ def cmd_start(a):
             return
         out({"job": job_id, "continuing": True})
         return
-    try:
-        learn.sync_pending(cfg)
-    except Exception:  # noqa: BLE001 - never block starting a job on learnings bookkeeping
-        pass
     item = st.pop_backlog_item(arg or None)
     text = arg or (item or {}).get("title")
     if not text:
@@ -149,30 +147,10 @@ def cmd_report(a):
 
 def cmd_approve(a):
     cfg = load()
-    if a.job == "learnings":
-        return out(approve_learnings(cfg, [a.gate] + (a.value or []) if a.gate else []))
     try:
         out(pipeline.approve(cfg, a.job, a.gate, (a.value or [None])[0]))
     except ValueError as e:
         out({"error": str(e)})
-
-
-def approve_learnings(cfg, ids):
-    from . import briefs
-    p = cfg.work_dir / "learnings-pending.md"
-    secs = briefs.pending_sections(cfg)
-    props = briefs.parse_entries(secs.get("Proposals", ""))
-    chosen = [e for e in props if not ids or e["id"] in ids]
-    if not chosen:
-        return {"approved": 0}
-    entries = [{"kind": "learning", "roles": e["roles"], "text": e["text"]} for e in chosen]
-    text = p.read_text()
-    for e in chosen:
-        text = text.replace(e["line"] + "\n", "")
-    p.write_text(text)
-    learn.add_pending(cfg, entries, "approved")
-    return {"approved": len(chosen), "note": "settings/REVIEW.md/CLAUDE.md proposals must be "
-                                             "applied by hand in v1; learnings were moved to Learnings"}
 
 
 def cmd_rework(a):
@@ -215,6 +193,7 @@ def health(cfg):
     issues, ok, notes = [], [], []
     st = Store(cfg)
     ok.append("SDLC.md valid")
+    issues.extend(cfg.warnings)                  # e.g. a listed reviewer file that is missing
     if not (cfg["commands"] or {}).get("test"):
         issues.append("commands.test is not set: verify can't check anything")
     for name in ("lint", "build"):
@@ -312,7 +291,7 @@ def review_plan(cfg, names=(), base=None):
         elif r.get("at", "review") == "spec":
             skipped.append({"name": name, "why": "reviews specs, not code"})
         else:
-            reviewers.append({"name": name, "kind": kind, "target": r.get(kind),
+            reviewers.append({"name": name, "kind": kind, "target": r.get("file") or r.get(kind),
                               "blocking": r.get("blocking", True), "at": r.get("at", "review")})
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-")
     return {"branch": branch, "base": base, "files": files,
@@ -329,9 +308,17 @@ def cmd_review_plan(a):
         sys.exit(1)
 
 
+def cmd_reviewers(a):
+    try:
+        out(reviewers_mod.convert_legacy(config_mod.load(lenient=True)))
+    except ValueError as e:
+        out({"error": str(e)})
+        sys.exit(1)
+
+
 def cmd_serve(a):
     from . import serve
-    serve.serve(load(), port=a.port, open_browser=a.open)
+    serve.serve(config_mod.load(lenient=True), port=a.port, open_browser=a.open)
 
 
 def cmd_adapter(a):
@@ -377,6 +364,7 @@ def main(argv=None):
     p.set_defaults(fn=cmd_wait)
     p = sub.add_parser("hook"); p.add_argument("event"); p.set_defaults(fn=cmd_hook)
     p = sub.add_parser("review-plan"); p.add_argument("names", nargs="*"); p.add_argument("--base"); p.set_defaults(fn=cmd_review_plan)
+    p = sub.add_parser("reviewers"); p.add_argument("action", choices=["convert"]); p.set_defaults(fn=cmd_reviewers)
     p = sub.add_parser("serve"); p.add_argument("--port", type=int, default=0)
     p.add_argument("--open", action="store_true"); p.set_defaults(fn=cmd_serve)
     p = sub.add_parser("adapter"); p.add_argument("action", choices=["test"]); p.add_argument("kind", nargs="?",

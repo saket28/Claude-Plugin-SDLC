@@ -1,7 +1,7 @@
 {
   "name": "sdlc",
   "displayName": "SDLC",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Runs features through spec, build, verify, review and merge with token budgets, guardrails and a retro that improves every run.",
   "author": {
     "name": "Saket Porwal"
@@ -13,13 +13,5 @@
     "review",
     "ci",
     "agents"
-  ],
-  "userConfig": {
-    "notify_webhook": {
-      "type": "string",
-      "title": "Notification webhook",
-      "description": "Optional Slack-style webhook for needs-human, budget and failure alerts",
-      "sensitive": true
-    }
-  }
+  ]
 }

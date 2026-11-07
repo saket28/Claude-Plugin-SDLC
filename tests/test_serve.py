@@ -14,7 +14,7 @@ from sdlc.store import Store
 class ServeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.repo = make_repo(BASE_MD.format(merge_gate="auto", max_rounds=2, extra=""))
+        cls.repo = make_repo(BASE_MD.format(merge_gate="auto", max_rounds=3, extra=""))
         cls.cfg = config.load(cls.repo)
         cls.job = Store(cls.cfg).create_job("Say hello")["id"]
         drive(cls.cfg, cls.job, Agents())
@@ -53,8 +53,15 @@ class ServeTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(b["jobs"][0]["status"], "done")
         code, j = self.req(f"/api/job?id={self.job}")
-        self.assertIn("spec.md", j["files"])
         self.assertTrue(any(s["stage"] == "review" for s in j["timeline"]))
+        by = {x["stage"]: x for x in j["timeline"]}
+        self.assertEqual(by["review"]["status"], "PASS")
+        self.assertIn("round-1/review-code.md", by["review"]["files"])
+        self.assertEqual(j["max_rounds"], 3)
+        names = {x["name"]: x for x in by["review"]["detail"]["reviewers"]}
+        self.assertEqual(names["code"]["state"], "ran")
+        self.assertIn(names["security"]["state"], ("skipped", "not evaluated"))
+        self.assertNotIn("rounds", j)
         code, t = self.req(f"/api/file?job={self.job}&path=spec.md")
         self.assertIn("revision", t)
 
@@ -77,10 +84,42 @@ class ServeTest(unittest.TestCase):
         self.assertEqual(st.pop_backlog_item("CSV")["description"], "new")
         self.assertEqual(st.pop_backlog(), "Legacy one-liner")
 
+    def test_alerts_stored_in_job_folder_and_cleared(self):
+        job = Store(self.cfg).create_job("Alerts")["id"]
+        st = Store(self.cfg)
+        st.event(job, "needs_human", reason="budget", detail="over")
+        st.event(job, "failed", reason="boom")
+        st.event(job, "budget", level="warn", scope="job", used=8, limit=10)
+        kinds = [a["kind"] for a in self.req(f"/api/job?id={job}")[1]["alerts"]]
+        self.assertEqual(kinds, ["needs-human", "failed", "budget-warning"])
+        self.assertTrue((st.job_dir(job) / "alerts.json").exists())
+        first = self.req(f"/api/job?id={job}")[1]["alerts"][0]["id"]
+        self.req("/api/alerts/clear", {"job": job, "ids": [first]})
+        self.assertEqual(len(self.req(f"/api/job?id={job}")[1]["alerts"]), 2)
+        self.req("/api/alerts/clear", {"job": job})
+        self.assertEqual(self.req(f"/api/job?id={job}")[1]["alerts"], [])
+        self.assertIn("needs-human", self.req("/api/board")[1]["columns"])
+
+    def test_delete_learning(self):
+        sd = self.repo / "SDLC.md"
+        sd.write_text(sd.read_text() + "\n## Learnings\n- [L-abcd] builder · Do X (job-1)\n- [L-ef01] all · Keep Y (job-2)\n")
+        self.req("/api/learnings/delete", {"id": "L-abcd"})
+        self.assertNotIn("L-abcd", sd.read_text())
+        self.assertIn("L-ef01", sd.read_text())
+        self.assertEqual(self.req("/api/learnings/delete", {"id": "L-abcd"})[0], 400)
+
+    def test_update_learning(self):
+        sd = self.repo / "SDLC.md"
+        sd.write_text(sd.read_text() + "\n## Learnings\n- [L-abcd] builder · Do X (job-1)\n")
+        self.req("/api/learnings/update", {"id": "L-abcd", "roles": ["tester", "builder"], "text": "Do Z"})
+        self.assertIn("- [L-abcd] tester, builder · Do Z", sd.read_text())
+        self.assertEqual(self.req("/api/learnings/update", {"id": "L-nope", "text": "x"})[0], 400)
+        self.assertEqual(self.req("/api/learnings/update", {"id": "L-abcd", "text": " "})[0], 400)
+
     def test_help(self):
         code, t = self.req("/api/help")
         self.assertEqual(code, 200)
-        self.assertIn("/sdlc:add-reviewer", t)
+        self.assertIn("/sdlc:review", t)
 
     def test_no_path_traversal(self):
         self.assertEqual(self.req(f"/api/file?job={self.job}&path=../../SDLC.md")[0], 404)
@@ -88,18 +127,36 @@ class ServeTest(unittest.TestCase):
     def test_settings_preview_save_and_stale_hash(self):
         code, s = self.req("/api/settings")
         self.assertIn("groups", s["schema"])
-        code, p = self.req("/api/settings/preview", {"changes": {"max_rounds": 3}})
-        self.assertIn("max_rounds: 3", p["after"])
-        code, r = self.req("/api/settings", {"changes": {"max_rounds": 3}, "hash": s["hash"]})
-        self.assertEqual(code, 200, r)
-        self.assertIn("max_rounds: 3", (self.repo / "SDLC.md").read_text())
+        code, p = self.req("/api/settings/preview", {"changes": {"max_rounds": 4}})
+        self.assertIn("max_rounds: 4", p["after"])
         code, r = self.req("/api/settings", {"changes": {"max_rounds": 4}, "hash": s["hash"]})
+        self.assertEqual(code, 200, r)
+        self.assertIn("max_rounds: 4", (self.repo / "SDLC.md").read_text())
+        code, r = self.req("/api/settings", {"changes": {"max_rounds": 5}, "hash": s["hash"]})
         self.assertEqual(code, 400)                                # stale hash rejected
         self.assertIn("changed on disk", r["error"])
 
     def test_invalid_settings_rejected(self):
         code, s = self.req("/api/settings")
         code, r = self.req("/api/settings", {"changes": {"gates.merge": "sometimes"}, "hash": s["hash"]})
+        self.assertEqual(code, 400)
+
+    def test_reviewer_file_editing(self):
+        code, s = self.req("/api/settings")
+        self.assertIn("{{name}}", s["agent_template"])
+        self.assertIn("## Important", s["reviewer_template"])
+        change = {"reviewers.a11y": {"instructions": ".claude/reviewers/a11y.md", "model": "haiku"}}
+        code, r = self.req("/api/settings/preview", {"changes": change, "files": {".claude/reviewers/a11y.md": "# a11y\n"}})
+        self.assertEqual(code, 200, r)
+        self.assertEqual(r["writes"], [{"path": ".claude/reviewers/a11y.md", "new": True}])
+        self.assertFalse((self.repo / ".claude/reviewers/a11y.md").exists())          # preview writes nothing
+        code, r = self.req("/api/settings", {"changes": change, "hash": s["hash"],
+                                              "files": {".claude/reviewers/a11y.md": "# a11y\n"}})
+        self.assertEqual(code, 200, r)
+        self.assertEqual(self.req("/api/reviewer?name=a11y")[1]["content"], "# a11y\n")
+        code, r = self.req("/api/settings/preview", {"changes": {}, "files": {"../x.md": "no"}})
+        self.assertEqual(code, 400)
+        code, r = self.req("/api/settings/preview", {"changes": {"reviewers.bad": {"run": "true", "model": "gpt"}}})
         self.assertEqual(code, 400)
 
     def test_cross_origin_refused(self):

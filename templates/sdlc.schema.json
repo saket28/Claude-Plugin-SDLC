@@ -17,7 +17,8 @@
     {"title": "Gates and rounds", "fields": [
       {"path": "gates.spec", "type": "gate", "help": "Does a human approve the spec before building? auto, human, or {human_when: <rule>}"},
       {"path": "gates.merge", "type": "gate", "help": "Does a human approve the merge? With GitHub this is the PR's approval"},
-      {"path": "max_rounds", "type": "int", "min": 0, "help": "Automatic rework rounds before the job needs a human"}
+      {"path": "merge_strategy", "type": "enum", "options": ["squash", "merge", "rebase"], "help": "How a finished job lands on the base branch: squash = one commit, merge = merge commit, rebase = keep every commit. The branch is always rebased onto base and re-verified first"},
+      {"path": "max_rounds", "type": "int", "min": 1, "help": "Total rounds (builds) per job, the first one included: 3 means the first build plus up to 2 automatic reworks, then a human decides. Minimum 1"}
     ]},
     {"title": "Models", "fields": [
       {"path": "models.spec-writer", "type": "enum", "options": ["opus", "sonnet", "haiku", "fable", "inherit"], "help": "Model for the spec-writer"},
@@ -40,11 +41,10 @@
     ]},
     {"title": "Integrations", "fields": [
       {"path": "host.adapter", "type": "enum", "options": ["local", "github"], "allow_custom": true, "help": "Where code lands: local git, GitHub (via gh), or a repo command adapter path"},
-      {"path": "board.adapter", "type": "enum", "options": ["files"], "allow_custom": true, "help": "Where jobs live: local files, or a repo command adapter path"},
-      {"path": "notify", "type": "string", "help": "Name of a userConfig secret holding a webhook for alerts (the secret itself is never shown)", "secret_ref": true}
+      {"path": "board.adapter", "type": "enum", "options": ["files"], "allow_custom": true, "help": "Where jobs live: local files, or a repo command adapter path"}
     ]},
     {"title": "Learning", "fields": [
-      {"path": "learning", "type": "enum", "options": ["auto", "propose", "off"], "help": "auto applies new learnings; propose waits for approval; off disables the retro"}
+      {"path": "learning", "type": "enum", "options": ["auto", "off"], "help": "auto: the retro writes new learnings and answers straight into SDLC.md; off disables the retro"}
     ]},
     {"title": "Guardrails", "fields": [
       {"path": "protected_paths", "type": "list", "additive": true, "help": "Extra paths agents may never change (added to the built-in list)"},
