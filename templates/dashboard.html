@@ -218,6 +218,7 @@ function roundsHtml(j) {
   }).join("");
 }
 async function openJob(id) {
+  history.replaceState(null, "", "#job-" + id);
   const j = await api("/api/job?id="+encodeURIComponent(id));
   const steps = j.timeline.map(s => `<div class="step"><h4>${esc(s.stage)}</h4>
     <div class="meta">${dur(s.duration_s)} ${s.tokens ? "· "+fmt(s.tokens)+" tokens" : ""}</div>
@@ -244,7 +245,7 @@ async function openFile(job, path) {
   const t = await api(`/api/file?job=${encodeURIComponent(job)}&path=${encodeURIComponent(path)}`);
   document.getElementById("file-view").innerHTML = `<h3>${esc(path)}</h3><pre class="md">${esc(t)}</pre>`;
 }
-function closeDrawer() { document.getElementById("drawer").classList.remove("open"); }
+function closeDrawer() { document.getElementById("drawer").classList.remove("open"); history.replaceState(null, "", location.pathname + location.search); }
 
 /* ---------------- Settings ---------------- */
 let S = null, changes = {};
@@ -293,7 +294,7 @@ async function loadSettings() {
   const entries = (list, actions) => list.length ? list.map(e => `<div class="entry"><code>${esc(e.id)}</code><span>${esc(e.roles.join(", "))} · ${esc(e.text)}</span>${actions ? `<button class="secondary" onclick="learning('accept','${e.id}')">Accept</button><button class="secondary" onclick="learning('reject','${e.id}')">Reject</button>` : ""}</div>`).join("") : '<span class="muted">None</span>';
   document.getElementById("settings-view").innerHTML = `${groups}
     <div class="group"><h3>Reviewers</h3><table><tr><th>Name</th><th>Kind</th><th>At</th><th>When</th><th>Condition</th><th>Blocking</th></tr>${rv}</table>
-      <div class="help muted" style="margin-top:6px">Add reviewers with /sdlc:reviewer (see the Help tab); edit when they run here.</div><div class="err" id="err-reviewers"></div></div>
+      <div class="help muted" style="margin-top:6px">Add reviewers with /sdlc:add-reviewer (see the Help tab); edit when they run here.</div><div class="err" id="err-reviewers"></div></div>
     <div class="group"><h3>Pending proposals</h3>${entries(S.pending.Proposals||[], true)}</div>
     <div class="group"><h3>Pending learnings and answers</h3>${entries([...(S.pending.Learnings||[]), ...(S.pending.Answers||[])], false)}</div>
     <div class="group"><h3>Learnings in SDLC.md</h3>${entries(S.learnings.Learnings||[], false)}<h3 style="margin-top:12px">Answers in SDLC.md</h3>${entries(S.learnings.Answers||[], false)}</div>
@@ -357,7 +358,8 @@ async function loadHelp() {
   const r = await fetch("/api/help", {headers: {"X-SDLC-Token": TOKEN}});
   el.textContent = await r.text();
 }
-loadBoard().catch(e => document.getElementById("board").textContent = e.message);
+loadBoard().then(() => { const m = location.hash.match(/^#job-(\w+)$/); if (m) openJob(m[1]); })
+  .catch(e => document.getElementById("board").textContent = e.message);
 setInterval(() => { if (!document.getElementById("board-view").hidden) loadBoard().catch(() => {}); }, 4000);
 </script>
 </body>

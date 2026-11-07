@@ -4,6 +4,7 @@ because whatever it prints lands in the orchestrator's context."""
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -286,6 +287,48 @@ def cmd_wait(a):
     out({"job": a.job, "timeout": True})
 
 
+def review_plan(cfg, names=(), base=None):
+    """What `/sdlc:review-all` needs: the branch, its diff against base, every reviewer to run
+    (ignoring `when`/`condition`: "all" means all) and where to write the report."""
+    root = cfg.root
+    base = base or cfg["base_branch"]
+    branch = config_mod.git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+    if config_mod.git("rev-parse", "--verify", "-q", base, cwd=root, check=False) == "":
+        raise RuntimeError(f"base branch '{base}' not found; pass one: review-plan <base>")
+    if branch == base:
+        raise RuntimeError(f"you are on the base branch '{base}'; check out the branch to review")
+    files = config_mod.git("diff", "--name-only", f"{base}...HEAD", cwd=root).split()
+    unknown = [n for n in names if n not in cfg["reviewers"]]
+    if unknown:
+        raise RuntimeError(f"unknown reviewer(s): {', '.join(unknown)}; "
+                           f"configured: {', '.join(cfg['reviewers'])}")
+    reviewers, skipped = [], []
+    for name, r in cfg["reviewers"].items():
+        if names and name not in names:
+            continue
+        kind = next((k for k in config_mod.REVIEWER_KINDS if k in r), None)
+        if r.get("when") == "never" and "condition" not in r and not names:
+            skipped.append({"name": name, "why": "turned off (when: never)"})
+        elif r.get("at", "review") == "spec":
+            skipped.append({"name": name, "why": "reviews specs, not code"})
+        else:
+            reviewers.append({"name": name, "kind": kind, "target": r.get(kind),
+                              "blocking": r.get("blocking", True), "at": r.get("at", "review")})
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-")
+    return {"branch": branch, "base": base, "files": files,
+            "stat": config_mod.git("diff", "--stat", f"{base}...HEAD", cwd=root),
+            "reviewers": reviewers, "skipped": skipped, "has_review_md": (root / "REVIEW.md").exists(),
+            "report_dir": str(root / ".sdlc" / "reviews" / slug)}
+
+
+def cmd_review_plan(a):
+    try:
+        out(review_plan(load(), a.names, a.base))
+    except RuntimeError as e:
+        out({"error": str(e)})
+        sys.exit(1)
+
+
 def cmd_serve(a):
     from . import serve
     serve.serve(load(), port=a.port, open_browser=a.open)
@@ -333,6 +376,7 @@ def main(argv=None):
     p.add_argument("--interval", type=int, default=60); p.add_argument("--max-hours", type=float, default=12)
     p.set_defaults(fn=cmd_wait)
     p = sub.add_parser("hook"); p.add_argument("event"); p.set_defaults(fn=cmd_hook)
+    p = sub.add_parser("review-plan"); p.add_argument("names", nargs="*"); p.add_argument("--base"); p.set_defaults(fn=cmd_review_plan)
     p = sub.add_parser("serve"); p.add_argument("--port", type=int, default=0)
     p.add_argument("--open", action="store_true"); p.set_defaults(fn=cmd_serve)
     p = sub.add_parser("adapter"); p.add_argument("action", choices=["test"]); p.add_argument("kind", nargs="?",

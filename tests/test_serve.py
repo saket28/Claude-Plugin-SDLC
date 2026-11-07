@@ -80,7 +80,7 @@ class ServeTest(unittest.TestCase):
     def test_help(self):
         code, t = self.req("/api/help")
         self.assertEqual(code, 200)
-        self.assertIn("/sdlc:reviewer", t)
+        self.assertIn("/sdlc:add-reviewer", t)
 
     def test_no_path_traversal(self):
         self.assertEqual(self.req(f"/api/file?job={self.job}&path=../../SDLC.md")[0], 404)

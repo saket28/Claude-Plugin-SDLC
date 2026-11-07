@@ -1,5 +1,5 @@
 ---
-name: reviewer
+name: add-reviewer
 description: Add or change an sdlc reviewer (instructions file, project subagent, or shell command) through a guided flow.
 argument-hint: "[reviewer-name]"
 disable-model-invocation: true
