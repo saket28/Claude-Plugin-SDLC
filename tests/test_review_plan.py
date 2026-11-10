@@ -6,11 +6,13 @@ from sdlc import cli, config
 
 SDLC = """\
 ---
-reviewers:
-  a11y: {instructions: review-a11y.md}
-  off: {run: "true", when: never}
-  arch: {instructions: review-a11y.md, at: spec}
-  lic: {run: "true", at: merge, blocking: false}
+review:
+  reviewer:
+    list:
+      a11y: {instructions: review-a11y.md}
+      off: {run: "true", when: never}
+      arch: {instructions: review-a11y.md, at: spec}
+      lic: {run: "true", at: merge, blocking: false}
 ---
 """
 

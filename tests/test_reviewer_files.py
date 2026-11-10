@@ -6,7 +6,9 @@ from sdlc import config, reviewers, yamlish
 
 LIST = """\
 ---
-reviewers: [.claude/reviewers/code.md, .claude/reviewers/ux.md, .claude/reviewers/gone.md]
+review:
+  reviewer:
+    list: [.claude/reviewers/code.md, .claude/reviewers/ux.md, .claude/reviewers/gone.md]
 ---
 """
 
@@ -20,12 +22,12 @@ class ReviewerFilesTest(unittest.TestCase):
 
     def test_list_of_paths_loads_files_with_their_own_settings(self):
         cfg = config.load(self.repo)
-        self.assertEqual(list(cfg["reviewers"]), ["code", "ux"])             # security not listed: not a reviewer
-        ux = cfg["reviewers"]["ux"]
+        self.assertEqual(list(cfg.reviewers), ["code", "ux"])             # security not listed: not a reviewer
+        ux = cfg.reviewers["ux"]
         self.assertEqual((ux["at"], ux["blocking"], ux["model"]), ("merge", False, "haiku"))
         self.assertEqual(ux["when"], "paths:[src/**, *.css]")
         self.assertEqual(reviewers.instructions_text(self.repo, ux), "# UX\nCheck focus order.")
-        self.assertEqual(cfg["reviewers"]["code"]["body"], "Extra words.")
+        self.assertEqual(cfg.reviewers["code"]["body"], "Extra words.")
         self.assertTrue(any("gone.md" in w for w in cfg.warnings))             # missing file: a warning, not a crash
 
     def test_builtin_extra_instructions_ignore_html_comments(self):
@@ -41,26 +43,26 @@ class ReviewerFilesTest(unittest.TestCase):
         front, body = yamlish.parse_frontmatter(text)
         self.assertEqual((front["at"], front["blocking"], front["model"]), ("review", True, "sonnet"))
         cfg = config.load(self.repo)
-        self.assertIn(".claude/reviewers/a11y.md", cfg.raw["reviewers"])
+        self.assertIn(".claude/reviewers/a11y.md", cfg.raw["review"]["reviewer"]["list"])
         with self.assertRaises(ValueError):
             reviewers.save(cfg, "bad", {"run": "x", "agent": "y"}, "")
         with self.assertRaises(ValueError):
             reviewers.save(cfg, "a11y", {"when": "sometimes maybe"}, "x")
         reviewers.delete(cfg, "a11y")
-        self.assertNotIn(".claude/reviewers/a11y.md", config.load(self.repo).raw["reviewers"])
+        self.assertNotIn(".claude/reviewers/a11y.md", config.load(self.repo).raw["review"]["reviewer"]["list"])
         self.assertTrue((self.repo / ".claude/reviewers/a11y.md").exists())     # the file is kept
 
     def test_convert_inline_reviewers(self):
-        repo = make_repo("---\nreviewers:\n  arch:\n    instructions: review-arch.md\n    at: spec\n  lic: { run: \"true\", blocking: false }\n  code: { when: never }\n---\n",
+        repo = make_repo("---\nreview:\n  reviewer:\n    list:\n      arch:\n        instructions: review-arch.md\n        at: spec\n      lic: { run: \"true\", blocking: false }\n      code: { when: never }\n---\n",
                          {"review-arch.md": "# Arch\nCheck layering.\n"})
         self.addCleanup(shutil.rmtree, repo.parent, ignore_errors=True)
         res = reviewers.convert_legacy(config.load(repo))
         self.assertEqual(res["listed"][:2], [".claude/reviewers/code.md", ".claude/reviewers/security.md"])
         cfg = config.load(repo)
-        self.assertEqual(cfg["reviewers"]["code"]["when"], "never")           # the tweak moved into the file
-        self.assertEqual(cfg["reviewers"]["arch"]["at"], "spec")
-        self.assertEqual(reviewers.instructions_text(repo, cfg["reviewers"]["arch"]), "# Arch\nCheck layering.")
-        self.assertFalse(cfg["reviewers"]["lic"]["blocking"])
+        self.assertEqual(cfg.reviewers["code"]["when"], "never")           # the tweak moved into the file
+        self.assertEqual(cfg.reviewers["arch"]["at"], "spec")
+        self.assertEqual(reviewers.instructions_text(repo, cfg.reviewers["arch"]), "# Arch\nCheck layering.")
+        self.assertFalse(cfg.reviewers["lic"]["blocking"])
 
 
 if __name__ == "__main__":

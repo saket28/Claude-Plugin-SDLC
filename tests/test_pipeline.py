@@ -30,18 +30,12 @@ Say hello.
 {questions}
 """
 
-BASE_MD = """
----
-commands:
-  test: "python3 -c 'print(1)'"
-gates: {{ merge: {merge_gate} }}
-max_rounds: {max_rounds}
-{extra}
----
-
-## Pipeline rules
-- Keep it small.
-"""
+def base_md(merge_gate="human", max_rounds=3, extra=None):
+    """SDLC.md for tests. `extra` is a nested dict of settings merged over the base ones."""
+    settings = config.deep_merge({"release": {"gate": {"mode": merge_gate}},
+                                  "global": {"pipeline": {"max_rounds": max_rounds},
+                                             "command": {"test": "python3 -c 'print(1)'"}}}, extra or {})
+    return "---\n" + yamlish.dumps(settings) + "\n---\n\n## Pipeline rules\n- Keep it small.\n"
 
 
 class Agents:
@@ -52,6 +46,9 @@ class Agents:
         self.review_verdict = "PASS"
         self.test_verdict = "PASS"
         self.touch = "app.py"
+        self.dispute = False         # the builder disputes findings from round 2 on
+        self.upheld = 0              # the tester and reviewers keep what the builder disputed
+        self.nits = 0                # Nit findings the reviewers report
         self.calls = []
 
     def run(self, action):
@@ -71,13 +68,17 @@ class Agents:
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text(f"print('hello job {front['job']} round {front['round']}')\n")
                 sh(f"git add -A && git commit -qm 'build {front['round']}'", wt)
-                out.write_text(f"---\nround: {front['round']}\n---\n## Changes\nhello\n"
+                disputes = ("## Disputes\nThe failing check tests behaviour the spec never asks for.\n"
+                            if self.dispute and front["round"] > 1 else "")
+                out.write_text(f"---\nround: {front['round']}\n---\n## Changes\nhello\n{disputes}"
                                "## Learning candidates\n- The integration tests need the seed script first.\n")
             elif a["agent"] == "sdlc:tester":
-                out.write_text(f"---\nverdict: {self.test_verdict}\n---\n## Coverage\nAC-1 ok\n")
+                kept = "## Upheld\nThe spec does ask for it (AC-1).\n" if self.upheld else ""
+                out.write_text(f"---\nverdict: {self.test_verdict}\nupheld: {self.upheld}\n---\n## Coverage\nAC-1 ok\n{kept}")
             else:
                 imp = 1 if self.review_verdict == "CHANGES" else 0
-                out.write_text(f"---\nverdict: {self.review_verdict}\nimportant: {imp}\nnit: 0\n---\n")
+                kept = "## Upheld\nStill a bug: the input is not validated.\n" if self.upheld else ""
+                out.write_text(f"---\nverdict: {self.review_verdict}\nimportant: {imp}\nnit: {self.nits}\nupheld: {self.upheld}\n---\n{kept}")
 
 
 def drive(cfg, job, agents, max_steps=40, answers="A: hello"):
@@ -99,8 +100,8 @@ class PipelineTest(unittest.TestCase):
         os.environ.pop("FAKE_REVIEW", None)
         os.environ.pop("FAKE_JUDGE", None)
 
-    def repo(self, merge_gate="human", max_rounds=3, extra="", files=None):
-        repo = make_repo(BASE_MD.format(merge_gate=merge_gate, max_rounds=max_rounds, extra=extra), files)
+    def repo(self, merge_gate="human", max_rounds=3, extra=None, files=None):
+        repo = make_repo(base_md(merge_gate, max_rounds, extra), files)
         self.addCleanup(shutil.rmtree, repo.parent, ignore_errors=True)
         return repo, config.load(repo)
 
@@ -129,7 +130,7 @@ class PipelineTest(unittest.TestCase):
         self.assertGreater(Store(cfg).month_tokens(), 0)
 
     def _merged_commits(self, extra):
-        repo, cfg = self.repo(merge_gate="auto", extra=extra)
+        repo, cfg = self.repo(merge_gate="none", extra=extra)
         job = self.new_job(cfg)
         self.assertEqual(drive(cfg, job, Agents())["action"], "done")
         msgs = sh("git log --format=%s main", repo).split("\n")
@@ -137,27 +138,27 @@ class PipelineTest(unittest.TestCase):
         return repo, [m for m in msgs if m], branch
 
     def test_merge_strategy_squash_is_default_and_one_commit(self):
-        repo, msgs, _ = self._merged_commits("")
+        repo, msgs, _ = self._merged_commits({})
         self.assertEqual(len(msgs), 2)                       # init + one squash commit
         self.assertIn("(job-", msgs[0])
 
     def test_merge_strategy_rebase_keeps_commits_and_merge_makes_merge_commit(self):
-        repo, msgs, branch = self._merged_commits("merge_strategy: rebase")
+        repo, msgs, branch = self._merged_commits({"release": {"merge": {"strategy": "rebase", "delete_branch": False}}})
         tip = subprocess.run(["git", "rev-parse", "main", branch], cwd=repo, capture_output=True, text=True).stdout.split()
         self.assertEqual(tip[0], tip[1])                      # main is the job branch, nothing rewritten
-        repo, msgs, branch = self._merged_commits("merge_strategy: merge")
+        repo, msgs, branch = self._merged_commits({"release": {"merge": {"strategy": "merge"}}})
         parents = subprocess.run(["git", "log", "-1", "--format=%P", "main"], cwd=repo, capture_output=True, text=True).stdout.split()
         self.assertEqual(len(parents), 2)
 
     def test_spawn_carries_the_configured_model(self):
-        repo, cfg = self.repo(extra="models: { spec-writer: haiku }\nreviewers:\n  arch: { run: \"true\" }")
+        repo, cfg = self.repo(extra={"spec": {"agent": {"model": "haiku"}}, "review": {"reviewer": {"list": {"arch": {"run": "true"}}}}})
         job = self.new_job(cfg)
         act = pipeline.Pipeline(cfg, job).next_action()
         self.assertEqual(act["action"], "spawn")
         self.assertEqual(act["agents"][0]["model"], "haiku")
 
     def test_review_changes_hit_max_rounds_then_override(self):
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=2)
+        repo, cfg = self.repo(merge_gate="none", max_rounds=2)
         job = self.new_job(cfg)
         agents = Agents()
         agents.review_verdict = "CHANGES"
@@ -172,8 +173,44 @@ class PipelineTest(unittest.TestCase):
         front, _ = yamlish.parse_frontmatter((Store(cfg).job_dir(job) / "decision.md").read_text())
         self.assertTrue(front["override"])
 
+    def test_stalemate_when_the_tester_holds_out_against_a_dispute(self):
+        repo, cfg = self.repo(merge_gate="none")
+        job = self.new_job(cfg)
+        agents = Agents()
+        agents.test_verdict, agents.dispute, agents.upheld = "FAIL", True, 1
+        act = drive(cfg, job, agents)
+        self.assertEqual(act["action"], "wait")
+        self.assertIn("stalemate", act["reason"])
+        self.assertEqual(agents.calls.count("sdlc:builder"), 2)              # stopped as soon as both sides held
+        st = pipeline.Pipeline(cfg, job).state()
+        self.assertEqual((st.needs_human["reason"], st.stage), ("stalemate", "verify"))
+        self.assertIn("tester kept 1 disputed", st.needs_human["detail"])
+        self.assertIn("never asks for", st.needs_human["detail"])             # the builder's side is shown too
+        pipeline.approve(cfg, job, "override")                                # the human sides with the builder
+        self.assertEqual(drive(cfg, job, agents)["action"], "done")
+
+    def test_stalemate_when_a_reviewer_holds_out_against_a_dispute(self):
+        repo, cfg = self.repo(merge_gate="none", files={"review-arch.md": "Check the architecture."},
+                              extra={"review": {"reviewer": {"list": {"code": {"when": "never"},
+                                                                     "arch": {"instructions": "review-arch.md"}}}}})
+        job = self.new_job(cfg)
+        agents = Agents()
+        agents.review_verdict, agents.dispute, agents.upheld = "CHANGES", True, 1
+        os.environ["FAKE_REVIEW"] = "important"
+        act = drive(cfg, job, agents)
+        self.assertIn("stalemate", act["reason"])
+        self.assertEqual(pipeline.Pipeline(cfg, job).state().stage, "review")
+
+    def test_no_stalemate_without_a_dispute(self):
+        repo, cfg = self.repo(merge_gate="none")
+        job = self.new_job(cfg)
+        agents = Agents()
+        agents.test_verdict, agents.upheld = "FAIL", 1                        # builder never disputes
+        act = drive(cfg, job, agents)
+        self.assertIn("max-rounds", act["reason"])
+
     def test_failed_tests_start_a_new_round(self):
-        repo, cfg = self.repo(merge_gate="auto")
+        repo, cfg = self.repo(merge_gate="none")
         job = self.new_job(cfg)
         agents = Agents()
         agents.test_verdict = "FAIL"
@@ -182,7 +219,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(agents.calls.count("sdlc:tester"), 3)
 
     def test_spec_questions_are_asked_then_answered(self):
-        repo, cfg = self.repo(merge_gate="auto")
+        repo, cfg = self.repo(merge_gate="none")
         job = self.new_job(cfg)
         agents = Agents()
         agents.questions = True
@@ -192,7 +229,7 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(any(e["type"] == "question" for e in Store(cfg).events(job)))
 
     def test_budget_stops_then_approve_reruns_stage(self):
-        repo, cfg = self.repo(merge_gate="auto", extra="budgets: { per_job: 500 }")
+        repo, cfg = self.repo(merge_gate="none", extra={"global": {"budget": {"per_job": 500}}})
         job = self.new_job(cfg)
         agents = Agents()
         st = Store(cfg)
@@ -209,7 +246,7 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("sdlc:builder", agents.calls)
 
     def test_protected_path_change_is_caught_at_merge(self):
-        repo, cfg = self.repo(merge_gate="auto", extra='protected_paths: ["config/**"]')
+        repo, cfg = self.repo(merge_gate="none", extra={"global": {"guardrail": {"protected_paths": ["config/**"]}}})
         job = self.new_job(cfg)
         agents = Agents()
         agents.touch = "config/secret.yml"          # as if written through Bash
@@ -219,7 +256,7 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("config/secret.yml", act["detail"])
 
     def test_dirty_checkout_waits_and_keeps_user_changes(self):
-        repo, cfg = self.repo(merge_gate="auto")
+        repo, cfg = self.repo(merge_gate="none")
         job = self.new_job(cfg)
         agents = Agents()
         (repo / "notes.txt").write_text("x")
@@ -232,9 +269,9 @@ class PipelineTest(unittest.TestCase):
 
     def test_condition_reviewer_at_spec_step(self):
         (Path("/tmp") / "x").exists()
-        repo, cfg = self.repo(merge_gate="auto", files={"review-arch.md": "Check the architecture."},
-                              extra='reviewers:\n  arch: { instructions: review-arch.md, at: spec, '
-                                    'condition: "adds a service" }')
+        repo, cfg = self.repo(merge_gate="none", files={"review-arch.md": "Check the architecture."},
+                              extra={"review": {"reviewer": {"list": {"arch": {"instructions": "review-arch.md", "at": "spec",
+                                                                              "condition": "adds a service"}}}}})
         os.environ["FAKE_JUDGE"] = "yes"
         cfg = config.load(repo)
         job = self.new_job(cfg)
@@ -246,15 +283,15 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(sel[0]["selected"])
 
     def test_run_reviewer_at_merge_blocks(self):
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=1,
-                              extra="reviewers:\n  lic: { run: \"exit 3\", at: merge }")
+        repo, cfg = self.repo(merge_gate="none", max_rounds=1,
+                              extra={"review": {"reviewer": {"list": {"lic": {"run": "exit 3", "at": "merge"}}}}})
         job = self.new_job(cfg)
         act = drive(cfg, job, Agents())
         self.assertIn("max-rounds", act["reason"])
 
     def test_native_code_review_output_is_parsed_and_classified(self):
         # live run 1: /code-review returns a bare list without severities
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=1)
+        repo, cfg = self.repo(merge_gate="none", max_rounds=1)
         os.environ["FAKE_REVIEW"] = "native"
         job = self.new_job(cfg)
         act = drive(cfg, job, Agents())
@@ -268,7 +305,7 @@ class PipelineTest(unittest.TestCase):
 
     def test_dirty_tracked_files_in_worktree_are_not_a_conflict(self):
         # live run 1: tracked .pyc files changed by test runs made `git rebase` refuse
-        repo, cfg = self.repo(merge_gate="auto", files={"cache.bin": "v1"})
+        repo, cfg = self.repo(merge_gate="none", files={"cache.bin": "v1"})
         job = self.new_job(cfg)
         agents = Agents()
         real_run = agents.run
@@ -288,7 +325,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(agents.calls.count("sdlc:builder"), 1)
 
     def test_max_rounds_message_lists_every_round_reason(self):
-        repo, cfg = self.repo(merge_gate="auto", max_rounds=2)
+        repo, cfg = self.repo(merge_gate="none", max_rounds=2)
         agents = Agents()
         agents.test_verdict = "FAIL"
         act = drive(cfg, self.new_job(cfg), agents)
@@ -296,7 +333,7 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("then: tests failed", act["detail"])
 
     def test_deleting_a_job_folder_breaks_nothing(self):
-        repo, cfg = self.repo(merge_gate="auto")
+        repo, cfg = self.repo(merge_gate="none")
         st = Store(cfg)
         j1 = self.new_job(cfg)
         drive(cfg, j1, Agents())
@@ -309,7 +346,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(drive(cfg, j2, Agents())["action"], "done")
 
     def test_retro_writes_learnings_to_sdlc_md_and_briefs_use_them(self):
-        repo, cfg = self.repo(merge_gate="auto")
+        repo, cfg = self.repo(merge_gate="none")
         job = self.new_job(cfg)
         drive(cfg, job, Agents())
         res = learn.retro(cfg, job)

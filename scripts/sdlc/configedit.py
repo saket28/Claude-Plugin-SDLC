@@ -28,13 +28,13 @@ def _default(path):
 
 
 def apply(text, changes):
-    """changes: {"gates.merge": "auto", "budgets.per_stage.build": 800000, "x": None (= remove)}"""
+    """changes: {"release.gate.mode": "auto", "global.budget.per_job": 800000, "x": None (= remove)}"""
     fm, body = yamlish.split_frontmatter(text)
     lines = fm.splitlines()
     raw = yamlish.loads(fm) if fm.strip() else {}
     for dotted, value in changes.items():
         path = dotted.split(".")
-        if _default(path) == value and path[0] != "reviewers":
+        if _default(path) == value and path != ["review", "reviewer", "list"]:
             value = None                         # back to default: drop the override
         lines, raw = _set(lines, raw, path, value)
     new_fm = "\n".join(lines).strip("\n")
@@ -68,19 +68,62 @@ def _comment(rest):
     return m.group(0) if m and rest.count('"') % 2 == 0 else ""
 
 
+def _set_block3(lines, raw, path, value):
+    """Edit `top: / sub: / key:` in place when all three are written as blocks, so comments on the
+    neighbouring lines survive. Returns (lines, raw), or None when the layout isn't that simple."""
+    top, sub, key = path
+    i, rest = _find(lines, top, 0)
+    if i is None or (rest.strip() and not rest.strip().startswith("#")):
+        return None
+    j, jrest = _find(lines, sub, 2, i + 1, _block_end(lines, i, 0))
+    if j is None or (jrest.strip() and not jrest.strip().startswith("#")):
+        return None
+    jend = _block_end(lines, j, 2)
+    k, krest = _find(lines, key, 4, j + 1, jend)
+    node = raw.setdefault(top, {}).setdefault(sub, {})
+    if value is None:
+        if k is not None:
+            del lines[k:_block_end(lines, k, 4)]
+        node.pop(key, None)
+        if not node:                                         # the sub block is empty now: drop it, and its parent if empty
+            del lines[j:_block_end(lines, j, 2)]
+            raw[top].pop(sub, None)
+            if not raw[top]:
+                del lines[i:_block_end(lines, i, 0)]
+                raw.pop(top)
+        return lines, raw
+    new = f"    {key}: {yamlish.dump_inline(value)}"
+    if k is None:
+        lines.insert(jend, new)
+    else:
+        del lines[k + 1:_block_end(lines, k, 4)]
+        lines[k] = new + _comment(krest)
+    node[key] = value
+    return lines, raw
+
+
 def _set(lines, raw, path, value):
     top = path[0]
-    # Edits deeper than two levels rewrite the second-level value as a whole.
-    if len(path) > 2:
-        cur = dict(((raw.get(top) or {}).get(path[1])) or (_default(path[:2]) if _default(path[:2]) is not KeyError else {}))
+    if len(path) == 3:
+        done = _set_block3(lines, raw, path, value)
+        if done:
+            return done
+        cur = dict((raw.get(top) or {}).get(path[1]) or {})        # layout isn't plain blocks: rewrite the section
+        if value is None:
+            cur.pop(path[2], None)
+        else:
+            cur[path[2]] = value
+        return _set(lines, raw, path[:2], cur or None)
+    if len(path) > 3:                                              # inside a setting's own map (adapter ops ...)
+        cur = dict(((raw.get(top) or {}).get(path[1]) or {}).get(path[2]) or {})
         node = cur
-        for k in path[2:-1]:
+        for k in path[3:-1]:
             node = node.setdefault(k, {})
         if value is None:
             node.pop(path[-1], None)
         else:
             node[path[-1]] = value
-        return _set(lines, raw, path[:2], cur or None)
+        return _set(lines, raw, path[:3], cur or None)
     i, rest = _find(lines, top, 0)
     if len(path) == 1:
         if value is None:
@@ -138,7 +181,8 @@ def _files_to_write(root, files, new_text):
     if not files:
         return {}
     raw, _ = yamlish.parse_frontmatter(new_text)
-    known = {r["instructions"] for r in (raw.get("reviewers") or {}).values()
+    listed = (((raw.get("review") or {}).get("reviewer")) or {}).get("list")
+    known = {r["instructions"] for r in (listed.values() if isinstance(listed, dict) else [])
              if isinstance(r, dict) and isinstance(r.get("instructions"), str)}
     out = {}
     for rel, text in files.items():
@@ -181,14 +225,7 @@ def save(cfg, changes, expected_hash, source="ui", files=None):
 
 def _validate_text(root, text, assume_files=()):
     raw, body = yamlish.parse_frontmatter(text)
-    data = config.deep_merge(config.DEFAULTS, {k: v for k, v in raw.items() if k != "reviewers"})
-    data["reviewers"], _, _ = config.resolve_reviewers(root, raw.get("reviewers"))
-    for key in ("protected_paths", "blocked_commands"):
-        data[key] = list(dict.fromkeys(config.DEFAULTS[key] + (raw.get(key) or [])))
-    if not data["host"].get("adapter"):
-        data["host"]["adapter"] = "local"
-    b = data["budgets"]
-    over = [k for k, v in (b.get("per_stage") or {}).items() if isinstance(v, int) and v > b["per_job"]]
-    if over:
-        raise config.ConfigError("SDLC.md is invalid:\n  - per_stage budgets above per_job: " + ", ".join(over))
+    data, _, _, _ = config.build(root, raw)
+    if not data["release"]["host"].get("adapter"):
+        data["release"]["host"]["adapter"] = "local"
     config.validate(config.Config(root, data, body, raw), set(assume_files))

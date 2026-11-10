@@ -71,7 +71,7 @@ def phrase(cfg, job_id, cands):
         "instruction an agent can follow. 'answer' = a question a human answered, phrased as Q? A. "
         "Return {\"entries\": []} if nothing qualifies.\n\n"
         f"Job {job_id} notes:\n" + json.dumps(cands, indent=1)[:20000])
-    text, use = runners.headless(prompt, cfg.root, model=cfg["models"].get("judge"))
+    text, use = runners.headless(prompt, cfg.root, model=cfg.model("judge"))
     Store(cfg).record_usage(job_id, f"retro-{job_id}", use.get("tokens", 0))
     Store(cfg).event(job_id, "agent", key=f"retro-{job_id}", agent="headless:retro", stage="retro", data=use)
     m = re.search(r"\{.*\}", text, flags=re.S)
@@ -108,7 +108,7 @@ def retro(cfg, job_id):
     st = Store(cfg)
     if any(e["type"] == "retro" for e in st.events(job_id)):
         return {"skipped": "retro already ran"}
-    if cfg["learning"] == "off":
+    if cfg.v("global.learning.mode") == "off":
         st.event(job_id, "retro", added=0)
         return {"added": []}
     cands = collect(cfg, job_id)

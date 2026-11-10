@@ -60,18 +60,19 @@ def sh(cmd, cwd, timeout=1800, env=None):
 
 def verify(cfg, worktree, out_path):
     results, ok = [], True
-    for name in ("lint", "build", "test"):
-        cmd = (cfg["commands"] or {}).get(name)
+    for name in cfg.v("test.verify.order"):
+        cmd = cfg.command(name)
         if not cmd:
             continue
-        code, out, secs = sh(cmd, worktree)
+        code, out, secs = sh(cmd, worktree, timeout=cfg.v("global.command.timeout"))
         results.append((name, cmd, code, secs, out))
         if code != 0:
             ok = False
-            break               # later commands rarely help once one fails
+            if cfg.v("test.verify.stop_on_failure"):
+                break           # later commands rarely help once one fails
     body = ["# Verify", ""]
     if not results:
-        body.append("No verify commands are configured (commands.lint/build/test in SDLC.md).")
+        body.append("No verify commands are configured (global.command.lint/build/test, listed in test.verify.order).")
     for name, cmd, code, secs, out in results:
         body += [f"## {name}: {'PASS' if code == 0 else 'FAIL'} (exit {code}, {secs}s)",
                  f"`{cmd}`", ""]
@@ -215,7 +216,7 @@ def builtin_review(cfg, name, spec, worktree, base, out_path):
     text, use = headless(prompt, worktree, system_append=system, model=spec.get("model"))
     findings = parse_findings(text)
     if findings is not None:
-        findings, cuse = classify(findings, rules, worktree, model=cfg["models"].get("judge", "haiku"))
+        findings, cuse = classify(findings, rules, worktree, model=cfg.model("judge"))
         use = {**use, "tokens": use.get("tokens", 0) + cuse.get("tokens", 0)}
     if findings is None:
         # hand the raw text to the orchestrator to convert (§5)

@@ -71,8 +71,8 @@ def pre_tool_use(inp):
     session = job.get("session") or {}
     if tool == "Bash":
         cmd = " ".join(str(ti.get("command", "")).split())
-        for pat in cfg["blocked_commands"]:
-            pat = pat.replace("{base}", cfg["base_branch"])
+        for pat in cfg.v("global.guardrail.blocked_commands"):
+            pat = pat.replace("{base}", cfg.v("global.repo.base_branch"))
             if pat in cmd:
                 store.event(job["id"], "guardrail_block", agent=agent_type, tool="Bash", detail=pat)
                 return _deny(f"SDLC guardrail: `{pat}` is not allowed for pipeline agents.")
@@ -91,11 +91,11 @@ def pre_tool_use(inp):
     if role == "builder":
         if rel is None:
             reason = f"the builder may only write inside its worktree {wt}"
-        elif any(rules.glob_match(g, rel) for g in cfg["protected_paths"]):
+        elif any(rules.glob_match(g, rel) for g in cfg.v("global.guardrail.protected_paths")):
             reason = f"{rel} is a protected path"
     elif role == "tester":
-        if rel is None or not any(rules.glob_match(g, rel) for g in cfg["test_paths"]):
-            reason = f"the tester may only write test files ({', '.join(cfg['test_paths'])})"
+        if rel is None or not any(rules.glob_match(g, rel) for g in cfg.v("test.scope.paths")):
+            reason = f"the tester may only write test files ({', '.join(cfg.v('test.scope.paths'))})"
     else:
         reason = "this agent may only write its own output file: " + ", ".join(outputs or ["(none)"])
     if reason:

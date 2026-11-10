@@ -13,8 +13,9 @@ review instructions exactly. Use Bash only for read-only commands such as `git d
 
 Severities: **Important** = should block merging. **Nit** = worth noting, never blocks.
 Ignore issues the change didn't introduce. In a later round, check whether each of your
-earlier Important findings was fixed; if the builder disputed one, either withdraw it or
-keep it with a clear reason.
+earlier Important findings was fixed. If the builder disputed one, weigh its reason on the
+evidence: withdraw the finding if the builder is right, or keep it and say why. Don't keep
+a finding just to have the last word, and don't drop it just to end the argument.
 
 Write exactly one file, the `output` path in the brief's frontmatter:
 
@@ -23,10 +24,12 @@ Write exactly one file, the `output` path in the brief's frontmatter:
 verdict: PASS | CHANGES        # CHANGES if there is at least one Important finding
 important: <count>
 nit: <count>
+upheld: <count>               # builder disputes you considered and are keeping (0 if none)
 ---
 ## Important
 1. `path:line` finding, why it matters, how to fix it
 ## Nit
+## Upheld                  (only if upheld > 0: for each kept finding, why the builder's reason doesn't hold)
 ## Learning candidates   (optional)
 ```
 

@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import adapters, config as config_mod, hooks, learn, pipeline, reviewers as reviewers_mod, runners, yamlish
+from . import adapters, config as config_mod, hooks, learn, pipeline, principles as principles_mod, reviewers as reviewers_mod, runners, yamlish
 from .store import Store
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -28,7 +28,7 @@ def load():
 
 def detect(root):
     root = Path(root)
-    d = {"language": None, "commands": {}, "test_paths": None, "host": config_mod.detect_host(root),
+    d = {"language": None, "global": {"command": {}}, "test": {"scope": {}}, "host": config_mod.detect_host(root),
          "gh": bool(shutil.which("gh")), "has_sdlc_md": (root / "SDLC.md").exists(),
          "has_review_md": (root / "REVIEW.md").exists(), "has_claude_md": (root / "CLAUDE.md").exists()}
     pj = root / "package.json"
@@ -36,30 +36,30 @@ def detect(root):
         d["language"] = "javascript"
         scripts = json.loads(pj.read_text()).get("scripts", {})
         pm = "pnpm" if (root / "pnpm-lock.yaml").exists() else "yarn" if (root / "yarn.lock").exists() else "npm"
-        d["commands"]["setup"] = f"{pm} install" if pm != "npm" else "npm ci" if (root / "package-lock.json").exists() else "npm install"
+        d["global"]["command"]["setup"] = f"{pm} install" if pm != "npm" else "npm ci" if (root / "package-lock.json").exists() else "npm install"
         for k in ("lint", "build", "test"):
             if k in scripts:
-                d["commands"][k] = f"{pm} run {k}" if k != "test" else f"{pm} test"
-        d["test_paths"] = ["**/*.test.*", "**/*.spec.*", "test/**", "tests/**", "__tests__/**"]
+                d["global"]["command"][k] = f"{pm} run {k}" if k != "test" else f"{pm} test"
+        d["test"]["scope"]["paths"] = ["**/*.test.*", "**/*.spec.*", "test/**", "tests/**", "__tests__/**"]
     elif (root / "pyproject.toml").exists() or (root / "setup.py").exists():
         d["language"] = "python"
-        d["commands"]["test"] = "pytest -q" if shutil.which("pytest") else "python -m pytest -q"
+        d["global"]["command"]["test"] = "pytest -q" if shutil.which("pytest") else "python -m pytest -q"
         if "ruff" in ((root / "pyproject.toml").read_text() if (root / "pyproject.toml").exists() else ""):
-            d["commands"]["lint"] = "ruff check ."
-        d["test_paths"] = ["tests/**", "test/**", "**/test_*.py", "**/*_test.py"]
+            d["global"]["command"]["lint"] = "ruff check ."
+        d["test"]["scope"]["paths"] = ["tests/**", "test/**", "**/test_*.py", "**/*_test.py"]
     elif (root / "go.mod").exists():
         d["language"] = "go"
-        d["commands"].update(build="go build ./...", test="go test ./...", lint="go vet ./...")
-        d["test_paths"] = ["**/*_test.go"]
+        d["global"]["command"].update(build="go build ./...", test="go test ./...", lint="go vet ./...")
+        d["test"]["scope"]["paths"] = ["**/*_test.go"]
     elif (root / "Cargo.toml").exists():
         d["language"] = "rust"
-        d["commands"].update(build="cargo build", test="cargo test", lint="cargo clippy -- -D warnings")
-        d["test_paths"] = ["tests/**"]
+        d["global"]["command"].update(build="cargo build", test="cargo test", lint="cargo clippy -- -D warnings")
+        d["test"]["scope"]["paths"] = ["tests/**"]
     if (root / "Makefile").exists():
         mk = (root / "Makefile").read_text(errors="replace")
         for k in ("lint", "build", "test"):
-            if f"\n{k}:" in "\n" + mk and k not in d["commands"]:
-                d["commands"][k] = f"make {k}"
+            if f"\n{k}:" in "\n" + mk and k not in d["global"]["command"]:
+                d["global"]["command"][k] = f"make {k}"
     return d
 
 
@@ -73,23 +73,29 @@ def cmd_init(a):
         tmpl = (PLUGIN_ROOT / "templates" / "SDLC.md").read_text()
         front, body = yamlish.split_frontmatter(tmpl)
         comments = "".join(l for l in front.splitlines(keepends=True) if l.lstrip().startswith("#"))
-        settings = {**settings, "reviewers": reviewers_mod.ensure_defaults(root)}   # code + security as files
+        g = settings.get("global", {})
+        settings = {**settings,
+                    "review": {**settings.get("review", {}),
+                               "reviewer": {"list": reviewers_mod.ensure_defaults(root)}},     # code + security as files
+                    "global": {**g, "principle": {"list": principles_mod.ensure_defaults(root)}}}   # placeholders
         sdlc_md.write_text("---\n" + comments + yamlish.dumps(settings) + "\n---\n" + body)
-        created = ["SDLC.md"] + reviewers_mod.ensure_defaults(root)
+        created = ["SDLC.md"] + reviewers_mod.ensure_defaults(root) + principles_mod.ensure_defaults(root)
     else:
         created = []
+        if not (((config_mod.load(root).raw.get("global") or {}).get("principle")) or {}).get("list"):
+            created += principles_mod.add_starters(config_mod.load(root))     # an existing SDLC.md gets the starters too
     if not (root / "REVIEW.md").exists():
         shutil.copy(PLUGIN_ROOT / "templates" / "REVIEW.md", root / "REVIEW.md")
         created.append("REVIEW.md")
     cfg = config_mod.load(root)
     cfg.work_dir.mkdir(parents=True, exist_ok=True)
     gi = root / ".gitignore"
-    entry = cfg["work_dir"].rstrip("/") + "/"
+    entry = cfg.v("global.repo.work_dir").rstrip("/") + "/"
     lines = gi.read_text().splitlines() if gi.exists() else []
     if entry not in lines and entry.rstrip("/") not in lines:
         gi.write_text("\n".join(lines + [entry]) + "\n")
         created.append(".gitignore entry")
-    out({"created": created, "work_dir": str(cfg.work_dir), "host": cfg["host"]["adapter"],
+    out({"created": created, "work_dir": str(cfg.work_dir), "host": cfg.v("release.host")["adapter"],
          "worktree_dir": str(cfg.worktree_dir)})
 
 
@@ -129,7 +135,7 @@ def cmd_next(a):
     except Exception as e:  # noqa: BLE001
         p.ev("error", stage="next", detail=str(e))
         act = {"action": "failed", "job": a.job, "reason": f"internal error: {e}"}
-    if act["action"] in ("done", "failed") and not act.get("cancelled"):
+    if act["action"] in cfg.v("global.learning.on") and not act.get("cancelled"):
         try:
             learn.retro(cfg, a.job)
         except Exception as e:  # noqa: BLE001
@@ -175,18 +181,20 @@ def cmd_status(a):
         p = pipeline.Pipeline(cfg, m["id"])
         s = p.state()
         total, by_stage = p.job_usage()
-        status = ("cancelled" if s.cancelled else "failed" if s.failed else
-                  "needs-human" if s.needs_human else s.stage)
+        status = "cancelled" if s.cancelled else s.stage
         row = {"job": m["id"], "title": m["title"][:60], "status": status, "round": s.round,
                "tokens": total}
-        if s.needs_human:
-            row["why"] = s.needs_human.get("reason") + ": " + s.needs_human.get("detail", "")[:120]
+        if s.failed:
+            row.update(human_required="failed", why=s.failed.get("reason", "")[:160])
+        elif s.needs_human and s.stage != "done":
+            row.update(human_required=s.needs_human.get("reason"),
+                       why=s.needs_human.get("reason") + ": " + s.needs_human.get("detail", "")[:120])
         if a.job:
             row.update(by_stage=by_stage, branch=m["branch"], pr=m.get("pr"),
                        gates=s.gates, overrides=len(s.overrides))
         rows.append(row)
     out({"jobs": rows, "backlog": st.backlog()[:10], "month_tokens": st.month_tokens(),
-         "month_budget": cfg["budgets"]["per_month"]})
+         "month_budget": cfg.v("global.budget")["per_month"]})
 
 
 def health(cfg):
@@ -194,17 +202,17 @@ def health(cfg):
     st = Store(cfg)
     ok.append("SDLC.md valid")
     issues.extend(cfg.warnings)                  # e.g. a listed reviewer file that is missing
-    if not (cfg["commands"] or {}).get("test"):
-        issues.append("commands.test is not set: verify can't check anything")
+    if not cfg.command("test"):
+        issues.append("global.command.test is not set: verify can't check anything")
     for name in ("lint", "build"):
-        if not (cfg["commands"] or {}).get(name):
-            notes.append(f"commands.{name} is not set (optional)")
-    if cfg["host"]["adapter"] == "github" and not shutil.which("gh"):
+        if not cfg.command(name):
+            notes.append(f"global.command.{name} is not set (optional)")
+    if cfg.v("release.host")["adapter"] == "github" and not shutil.which("gh"):
         issues.append("host is github but `gh` is not installed")
     known = {m["branch"] for m in st.jobs()}
-    branches = config_mod.git("branch", "--list", cfg["branch_prefix"] + "*", "--format=%(refname:short)",
+    branches = config_mod.git("branch", "--list", cfg.v("global.repo.branch_prefix") + "*", "--format=%(refname:short)",
                               cwd=cfg.root, check=False).split()
-    orphans = [b for b in branches if b not in known and not b.startswith(cfg["branch_prefix"] + "learnings")]
+    orphans = [b for b in branches if b not in known and not b.startswith(cfg.v("global.repo.branch_prefix") + "learnings")]
     if orphans:
         issues.append("branches with no job folder: " + ", ".join(orphans))
     wts = [p for p in cfg.worktree_dir.glob("*") if p.is_dir()] if cfg.worktree_dir.exists() else []
@@ -219,7 +227,7 @@ def health(cfg):
         issues.append(str(e))
     try:
         adapter_test(cfg, dry_run=True)
-        ok.append(f"adapters configured (board: {cfg['board']['adapter']}, host: {cfg['host']['adapter']})")
+        ok.append(f"adapters configured (board: {cfg.v("global.board")['adapter']}, host: {cfg['release']['host']['adapter']})")
     except adapters.AdapterError as e:
         issues.append(str(e))
     return {"ok": ok, "issues": issues, "notes": notes}
@@ -238,7 +246,7 @@ def adapter_test(cfg, kind=None, dry_run=False):
                 exe = tmpl.split()[0]
                 if not (shutil.which(exe) or (cfg.root / exe).exists()):
                     raise adapters.AdapterError(f"{k}.ops.{op}: `{exe}` not found")
-        if k == "host" and cfg["host"]["adapter"] == "github" and not shutil.which("gh"):
+        if k == "host" and cfg.v("release.host")["adapter"] == "github" and not shutil.which("gh"):
             raise adapters.AdapterError("host is github but `gh` is not installed")
         results.append({"adapter": k, "name": a.settings.get("adapter"), "configured": True})
         if dry_run:
@@ -255,14 +263,15 @@ def cmd_wait(a):
     cfg = load()
     host = adapters.host(cfg)
     meta = Store(cfg).load_job(a.job)
-    deadline = time.time() + a.max_hours * 3600
+    interval = a.interval or cfg.v("global.wait.interval")
+    deadline = time.time() + (a.max_hours if a.max_hours is not None else cfg.v("global.wait.max_hours")) * 3600
     while time.time() < deadline:
         s = host.call("pr_status", branch=meta["branch"])
         if a.for_ == "ci" and s["ci"] != "pending":
             return out({"job": a.job, "ci": s["ci"], "next": f"/sdlc:start {a.job}"})
         if a.for_ == "approval" and (s["approved"] or s.get("merged")):
             return out({"job": a.job, "approved": True, "next": f"/sdlc:start {a.job}"})
-        time.sleep(a.interval)
+        time.sleep(interval)
     out({"job": a.job, "timeout": True})
 
 
@@ -270,19 +279,19 @@ def review_plan(cfg, names=(), base=None):
     """What `/sdlc:review-all` needs: the branch, its diff against base, every reviewer to run
     (ignoring `when`/`condition`: "all" means all) and where to write the report."""
     root = cfg.root
-    base = base or cfg["base_branch"]
+    base = base or cfg.v("global.repo.base_branch")
     branch = config_mod.git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
     if config_mod.git("rev-parse", "--verify", "-q", base, cwd=root, check=False) == "":
         raise RuntimeError(f"base branch '{base}' not found; pass one: review-plan <base>")
     if branch == base:
         raise RuntimeError(f"you are on the base branch '{base}'; check out the branch to review")
     files = config_mod.git("diff", "--name-only", f"{base}...HEAD", cwd=root).split()
-    unknown = [n for n in names if n not in cfg["reviewers"]]
+    unknown = [n for n in names if n not in cfg.reviewers]
     if unknown:
         raise RuntimeError(f"unknown reviewer(s): {', '.join(unknown)}; "
-                           f"configured: {', '.join(cfg['reviewers'])}")
+                           f"configured: {', '.join(cfg.reviewers)}")
     reviewers, skipped = [], []
-    for name, r in cfg["reviewers"].items():
+    for name, r in cfg.reviewers.items():
         if names and name not in names:
             continue
         kind = next((k for k in config_mod.REVIEWER_KINDS if k in r), None)
@@ -360,7 +369,7 @@ def main(argv=None):
     p = sub.add_parser("status"); p.add_argument("job", nargs="?"); p.add_argument("--check", action="store_true")
     p.set_defaults(fn=cmd_status)
     p = sub.add_parser("wait"); p.add_argument("job"); p.add_argument("--for", dest="for_", choices=["ci", "approval"])
-    p.add_argument("--interval", type=int, default=60); p.add_argument("--max-hours", type=float, default=12)
+    p.add_argument("--interval", type=int, default=None); p.add_argument("--max-hours", type=float, default=None)
     p.set_defaults(fn=cmd_wait)
     p = sub.add_parser("hook"); p.add_argument("event"); p.set_defaults(fn=cmd_hook)
     p = sub.add_parser("review-plan"); p.add_argument("names", nargs="*"); p.add_argument("--base"); p.set_defaults(fn=cmd_review_plan)

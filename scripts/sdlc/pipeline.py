@@ -18,7 +18,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from . import adapters, briefs, reviewers as reviewers_mod, rules, runners, usage, yamlish
+from . import adapters, briefs, principles, reviewers as reviewers_mod, rules, runners, usage, yamlish
 from .config import git
 from .store import Store
 
@@ -109,7 +109,7 @@ class Pipeline:
         self.meta = self.store.load_job(self.job_id)
         self.dir = self.store.job_dir(self.job_id)
         self.host = adapters.host(cfg)
-        self.base = cfg["base_branch"]
+        self.base = cfg.v("global.repo.base_branch")
 
     # ---------------------------------------------------------- helpers --
     @property
@@ -146,7 +146,7 @@ class Pipeline:
                 "spec-max": f"/sdlc:approve {j} spec  (accept the spec as it is)",
                 "max-rounds": f"/sdlc:approve {j} override  (merge anyway) or /sdlc:rework {j} \"...\"",
                 "rules": f"/sdlc:approve {j} override  or /sdlc:rework {j} \"...\"",
-                "disputed": f"/sdlc:approve {j} override  or /sdlc:rework {j} \"...\"",
+                "stalemate": f"/sdlc:approve {j} override  (side with the builder) or /sdlc:rework {j} \"your ruling\"",
                 "adapter": f"/sdlc:approve {j} retry",
                 }.get(reason, f"/sdlc:status {j}")
 
@@ -167,12 +167,12 @@ class Pipeline:
         return sum(by_stage.values()), by_stage
 
     def budget_check(self, stage):
-        b = self.cfg["budgets"]
+        b = self.cfg.v("global.budget")
         st = self.state()
         total, by_stage = self.job_usage()
         limits = [("job", total, b["per_job"] + st.budget_extra),
                   ("stage:" + stage, by_stage.get(stage, 0),
-                   (b["per_stage"].get(stage) or b["per_job"]) + st.budget_extra),
+                   (self.cfg.stage_budget(stage) or b["per_job"]) + st.budget_extra),
                   ("month", self.store.month_tokens(), b["per_month"])]
         for scope, used, limit in limits:
             if limit and used >= limit:
@@ -183,6 +183,19 @@ class Pipeline:
                 self.ev("budget", level="warn", scope=scope, used=used, limit=limit)
         return None
 
+    def principles_for(self, role, stage):
+        """The principles an agent should be pointed at: [{path, summary}]. Paths are in the main
+        checkout, because a job's worktree may not have files that aren't committed yet."""
+        specs = self.cfg.v("global.principle.list")
+        if not specs:
+            return []
+        try:
+            ctx = None if stage == "spec" or not (self.dir / "spec.md").exists() else self.rule_ctx(stage)
+        except Exception:  # noqa: BLE001 - filtering is best effort; never block a spawn on it
+            ctx = None
+        return [{"path": str(self.cfg.root / s["file"]), "summary": s.get("summary", "")}
+                for s in principles.applicable(specs, role, ctx)]
+
     # ------------------------------------------------------------- spawn --
     def spawn(self, items, stage, rnd):
         """items: [(key, agent, role, brief_meta, sections, output)]"""
@@ -192,20 +205,22 @@ class Pipeline:
             return over
         out = []
         for key, agent, role, meta, sections, output in items:
-            if st.spawns.get(key, 0) >= 2:
-                self.ev("failed", reason=f"{agent} did not produce {output} after 2 attempts", key=key)
+            attempts = self.cfg.v("global.pipeline.agent_attempts")
+            if st.spawns.get(key, 0) >= attempts:
+                self.ev("failed", reason=f"{agent} did not produce {output} after {attempts} attempt(s)", key=key)
                 self.link_session(closing=True)
                 return {"action": "failed", "job": self.job_id,
-                        "reason": f"{agent} did not produce {Path(output).name} twice. "
+                        "reason": f"{agent} did not produce {Path(output).name} after {attempts} attempt(s). "
                                   f"Fix the cause, then run /sdlc:start {self.job_id}."}
             brief = self.dir / "briefs" / f"{key}.md"
             briefs.write(self.cfg, brief, {"job": self.job_id, "stage": stage, "round": rnd,
                                            "agent": agent, "output": str(output),
-                                           "worktree": str(self.wt), **meta}, role, sections)
+                                           "worktree": str(self.wt), **meta}, role, sections,
+                         principles=self.principles_for(role, stage))
             self.ev("spawn", key=key, agent=agent, output=str(output), attempt=st.spawns.get(key, 0) + 1)
             entry = {"agent": agent, "key": key, "output": str(output),
                      "prompt": briefs.prompt_line(self.job_id, stage, rnd, brief)}
-            model = meta.get("model") or self.cfg["models"].get(role)
+            model = meta.get("model") or self.cfg.model(role)
             if model and model != "inherit":
                 entry["model"] = model               # the orchestrator passes this to the Agent tool
             out.append(entry)
@@ -240,7 +255,7 @@ class Pipeline:
     # ------------------------------------------------------------ rounds --
     def new_round(self, reason, step, detail=""):
         st = self.state()
-        if st.auto_rounds + 1 >= self.cfg["max_rounds"]:      # +1: the first build is a round too
+        if st.auto_rounds + 1 >= self.cfg.v("global.pipeline.max_rounds"):      # +1: the first build is a round too
             history = [f"round {e['n']}: {e.get('reason')}" for e in st.events
                        if e["type"] == "round" and e.get("auto")]
             return self.needs_human("max-rounds", step,
@@ -273,9 +288,9 @@ class Pipeline:
     # queued -> spec
     def do_queued(self, st):
         self.ensure_worktree()
-        setup = (self.cfg["commands"] or {}).get("setup")
+        setup = self.cfg.command("setup")
         if setup and not st.setup_done:
-            code, out, _ = runners.sh(setup, self.wt)
+            code, out, _ = runners.sh(setup, self.wt, timeout=self.cfg.v("global.command.timeout"))
             if code != 0:
                 return self.needs_human("setup", "queued", runners.tail(out, 20))
         self.ev("setup")
@@ -294,6 +309,10 @@ class Pipeline:
                 prev = self.dir / "spec-review" / f"r{st.spec_rev - 1}"
                 for f in sorted(prev.glob("review-*.md")) if prev.exists() else []:
                     sections.append((f"Spec review {f.stem[7:]}", f.read_text()))
+            extra = self.cfg.v("spec.format.sections")
+            if extra:
+                sections.append(("Extra sections this repo requires in every spec",
+                                 "Add these as `## <name>` sections after the standard ones:\n" + "\n".join(f"- {x}" for x in extra)))
             ans = self.dir / "answers.md"
             if ans.exists():
                 sections.append(("Answers to your questions", ans.read_text()))
@@ -308,7 +327,7 @@ class Pipeline:
         res = self.review_step("spec", st.spec_rev, self.dir / "spec-review" / f"r{st.spec_rev}")
         if res is not None:
             return res if isinstance(res, dict) else self._spec_changes(st, res)
-        human = self.gate_is_human("spec", self.rule_ctx("spec"))
+        human = self.gate_is_human("spec")
         if human and st.gates.get("spec") != "approved":
             if st.gates.get("spec") != "waiting":
                 self.ev("gate", gate="spec", status="waiting")
@@ -318,7 +337,7 @@ class Pipeline:
         return None
 
     def _spec_changes(self, st, failing):
-        if st.spec_revisions + 1 >= self.cfg["max_rounds"]:
+        if st.spec_revisions + 1 >= self.cfg.v("global.pipeline.max_rounds"):
             return self.needs_human("spec-max", "spec", ", ".join(failing))
         self.ev("spec_rev", n=st.spec_rev + 1, counts=True, reason="review: " + ", ".join(failing))
         return None
@@ -377,8 +396,8 @@ class Pipeline:
         tpath = rd / "test.md"
         if not tpath.exists():
             sections = [("Spec", (self.dir / "spec.md").read_text()),
-                        ("Test paths you may write", ", ".join(self.cfg["test_paths"])),
-                        ("Test command", (self.cfg["commands"] or {}).get("test") or "(none configured)")]
+                        ("Test paths you may write", ", ".join(self.cfg.v("test.scope.paths"))),
+                        ("Test command", self.cfg.command("test") or "(none configured)")]
             prev = self.round_dir(st.round - 1) / "test.md"
             if prev.exists():
                 sections.append(("Your previous test report", prev.read_text()))
@@ -387,9 +406,12 @@ class Pipeline:
                 sections.append(("Builder disputes (decide: withdraw or keep)", disputes))
             return self.spawn([(f"test-r{st.round}", AGENT_FOR["test"], "tester", {}, sections, tpath)],
                               "verify", st.round)
-        fr, _ = runners.read_artifact(tpath)
+        fr, tbody = runners.read_artifact(tpath)
         self.ev("verdict", step="test", round=st.round, verdict=fr.get("verdict"))
         if fr.get("verdict") != "PASS":
+            held = self.upheld(rd, {"tester": (fr, tbody)})
+            if held:
+                return self.needs_human("stalemate", "verify", held)
             return self.new_round("tests failed", "verify")
         self.ev("stage", stage="review")
         return None
@@ -402,12 +424,33 @@ class Pipeline:
             return None
         if isinstance(res, dict):
             return res
+        rd = self.round_dir(st.round)
+        held = self.upheld(rd, {n: runners.read_artifact(rd / f"review-{n}.md") for n in res})
+        if held:
+            return self.needs_human("stalemate", "review", held)
         return self.new_round("review: " + ", ".join(res), "review")
+
+    def upheld(self, rd, reports):
+        """A stalemate: the builder disputed a finding or test, and its checker kept it anyway.
+        reports: {name: (frontmatter, body)} of the checkers that still object. Returns the
+        explanation for the human, or "" when nobody is holding out against a dispute."""
+        build = (rd / "build.md").read_text() if (rd / "build.md").exists() else ""
+        if not (_section(build, "Disputes") or re.search(r"\bdisputed\b", _section(build, "Responses"), re.I)):
+            return ""
+        out = []
+        for name, (fr, body) in reports.items():
+            n = (fr or {}).get("upheld")
+            if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+                out.append(f"{name} kept {n} disputed item(s): "
+                           + (_section(body, "Upheld") or "see its report")[:400])
+        if not out:
+            return ""
+        return "The builder disputed; " + " | ".join(out) + f" | builder said: {(_section(build, 'Disputes') or _section(build, 'Responses'))[:400]}"
 
     def review_step(self, step, rnd, folder):
         """Run a step's reviewers. Returns None (all clear), a list of blocking reviewers
         with CHANGES, or an action dict (spawn / wait / convert)."""
-        reviewers = {n: r for n, r in self.cfg["reviewers"].items() if r.get("at", "review") == step}
+        reviewers = {n: r for n, r in self.cfg.reviewers.items() if r.get("at", "review") == step}
         if not reviewers:
             return None
         st = self.state()
@@ -461,7 +504,9 @@ class Pipeline:
                     sections.append(("Your previous review", prev.read_text()))
                 spawns.append((f"{step}-{name}-r{rnd}", agent, "reviewer",
                                {"reviewer": name, "blocking": spec.get("blocking", True),
-                                **({"model": spec["model"]} if spec.get("model") else {})},
+                                **({"model": spec["model"]} if spec.get("model") else {}),
+                                **({"critical_thinking": spec["critical_thinking"]}
+                                   if spec.get("critical_thinking") is not None else {})},
                                [s for s in sections if s], out))
         if spawns:
             return self.spawn(spawns, "review" if step == "review" else step, rnd)
@@ -470,7 +515,8 @@ class Pipeline:
             fr, _ = runners.read_artifact(folder / f"review-{name}.md")
             fr = fr or {}
             blocking = reviewers[name].get("blocking", True)
-            if fr.get("verdict") == "CHANGES" and blocking:
+            nits = self.cfg.v("review.severity.nits_block") and int(fr.get("nit") or 0) > 0
+            if (fr.get("verdict") == "CHANGES" or nits) and blocking:
                 failing.append(name)
         return failing or None
 
@@ -509,7 +555,7 @@ class Pipeline:
                   json.dumps(conditions, indent=1) + "\n\nSpec:\n" + spec_text[:12000] +
                   ("\n\nDiff summary:\n" + stat[:4000] if stat else ""))
         try:
-            text, use = runners.headless(prompt, self.cfg.root, model=self.cfg["models"].get("judge"))
+            text, use = runners.headless(prompt, self.cfg.root, model=self.cfg.model("judge"))
             self._record_headless(f"judge-{step}-{self.state().round}", step, "judge", use)
             m = re.search(r"\{.*\}", text, flags=re.S)
             data = json.loads(m.group(0)) if m else {}
@@ -544,15 +590,16 @@ class Pipeline:
             status = self.host.call("pr_status", branch=self.meta["branch"])
             if status.get("merged"):
                 return self.finish(st)
-            if status["ci"] == "pending":
-                return self._wait("waiting for CI", f"PR {self.meta['pr']}", waiter=self.waiter("ci"))
-            if status["ci"] == "fail":
-                return self.new_round("CI failed", "merge")
+            if self.cfg.v("release.ci.required"):
+                if status["ci"] == "pending":
+                    return self._wait("waiting for CI", f"PR {self.meta['pr']}", waiter=self.waiter("ci"))
+                if status["ci"] == "fail":
+                    return self.new_round("CI failed", "merge")
         if not st.skip_rules:
             problems = self.rule_check(st)
             if problems:
                 return self.needs_human("rules", "merge", "; ".join(problems))
-        human = self.gate_is_human("merge", self.rule_ctx("merge"))
+        human = self.gate_is_human("merge")
         if self.host.has_prs:
             status = self.host.call("pr_status", branch=self.meta["branch"])
             if human and not status["approved"] and not st.skip_rules:
@@ -563,7 +610,8 @@ class Pipeline:
                 if r.get("conflict"):
                     return self.new_round("merge conflict with " + self.base, "merge")
                 return self._wait("branch updated; waiting for CI", self.meta["pr"], waiter=self.waiter("ci"))
-            r = self.host.call("merge", branch=self.meta["branch"], strategy=self.cfg["merge_strategy"])
+            r = self.host.call("merge", branch=self.meta["branch"], strategy=self.cfg.v("release.merge.strategy"),
+                               message=self.merge_message(), delete_branch=self.cfg.v("release.merge.delete_branch"))
             if not r.get("merged"):
                 return self._wait(f"merge refused: {r.get('reason')}", f"Check {self.meta['pr']}",
                                   waiter=self.waiter("approval"))
@@ -584,8 +632,8 @@ class Pipeline:
             final.rename(rd / "verify-final-failed.md")
             return self.new_round("verify failed after rebase", "merge")
         r = self.host.call("merge", branch=self.meta["branch"], base=self.base,
-                           strategy=self.cfg["merge_strategy"],
-                           message=f"{self.meta['title']} (job-{self.job_id})")
+                           strategy=self.cfg.v("release.merge.strategy"),
+                           message=self.merge_message())
         if not r.get("merged"):
             return self._wait(f"cannot merge yet: {r.get('reason')}",
                               f"Fix that, then /sdlc:start {self.job_id}")
@@ -594,7 +642,7 @@ class Pipeline:
     def rule_check(self, st):
         problems = []
         changed = self.changed_paths()
-        protected = [p for p in changed for g in self.cfg["protected_paths"] if rules.glob_match(g, p)]
+        protected = [p for p in changed for g in self.cfg.v("global.guardrail.protected_paths") if rules.glob_match(g, p)]
         if protected:
             problems.append("protected paths changed: " + ", ".join(sorted(set(protected))))
         rd = self.round_dir(st.round)
@@ -604,11 +652,12 @@ class Pipeline:
                 problems.append(f"{name} is not PASS")
         return problems
 
-    def gate_is_human(self, gate, ctx):
-        g = self.cfg["gates"].get(gate, "auto")
-        if isinstance(g, dict):
-            return rules.evaluate(g["human_when"], ctx)
-        return g == "human"
+    def gate_is_human(self, gate):
+        return self.cfg.gate(gate) == "human"
+
+    def merge_message(self):
+        return self.cfg.v("release.merge.message").format(title=self.meta["title"], id=self.job_id,
+                                                          branch=self.meta["branch"])
 
     def waiter(self, what):
         return f"python3 {Path(__file__).resolve().parent.parent / 'sdlc.py'} wait {self.job_id} --for {what}"
@@ -633,7 +682,10 @@ class Pipeline:
         self.ev("merged", branch=self.meta["branch"])
         self.ev("stage", stage="done")
         try:
-            git("worktree", "remove", "--force", str(self.wt), cwd=self.cfg.root, check=False)
+            if self.cfg.v("release.cleanup.worktree"):
+                git("worktree", "remove", "--force", str(self.wt), cwd=self.cfg.root, check=False)
+            if self.cfg.v("release.merge.delete_branch") and not self.host.has_prs:
+                git("branch", "-D", self.meta["branch"], cwd=self.cfg.root, check=False)   # GitHub deletes its own
         except Exception:  # noqa: BLE001
             pass
         self.link_session(closing=True)
@@ -669,7 +721,7 @@ def approve(cfg, job_id, gate, value=None, by=None):
         p.ev("override", step="spec", reason="accepted spec after max revisions", by=by)
         p.ev("resume", by=by)
         p.ev("gate", gate="spec", status="approved", by=by)
-    elif reason in ("max-rounds", "rules", "disputed"):
+    elif reason in ("max-rounds", "rules", "stalemate"):
         p.ev("override", step=nh.get("step"), reason=f"{reason}: {nh.get('detail', '')}", by=by,
              skip_rules=True)
         p.ev("resume", by=by)

@@ -7,11 +7,9 @@ git init -q -b main
 git -c user.email=eval@example.com -c user.name=eval add -A
 cat > SDLC.md <<EOF2
 ---
-commands: { test: "python3 -m unittest discover -s tests -t ." }
-test_paths: ["tests/**"]
-gates: { merge: auto }
-host: { adapter: local }
-budgets: { per_job: 1000 }
+global: { command: { test: "python3 -m unittest discover -s tests -t ." }, budget: { per_job: 1000 } }
+test: { scope: { paths: ["tests/**"] } }
+release: { gate: { mode: none }, host: { adapter: local } }
 ---
 
 ## Pipeline rules

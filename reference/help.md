@@ -1,6 +1,6 @@
 # sdlc help
 
-A feature goes through: **spec → build → verify → review → merge**. You only step in at gates and when a job is `needs-human`.
+A feature goes through: **spec → build → verify → review → merge**. You only step in at gates and when a job is **human required** (it shows the alert icon on its card, in whatever stage it stopped).
 
 ## Commands
 
@@ -19,13 +19,13 @@ A feature goes through: **spec → build → verify → review → merge**. You 
 
 ## Flow
 
-1. `spec`: the spec-writer writes `spec.md` with testable acceptance criteria. Spec reviewers (`at: spec`) check it. Gate `spec` (auto unless there are open questions).
+1. `spec`: the spec-writer writes `spec.md` with testable acceptance criteria. Spec reviewers (`at: spec`) check it. Gate `spec` (off by default; set `spec.gate.mode: human` to approve specs yourself).
 2. `build`: the builder implements it in its own worktree (`<repo>.sdlc-worktrees/job-<n>`).
-3. `verify`: your `commands.*` run, and an independent tester writes and runs acceptance tests. Failures go back to the builder.
-4. `review`: reviewers with `at: review` run in parallel. Any **Important** finding sends the job back to the builder, until `max_rounds` total rounds (default 3, the first build included) are used, then `needs-human`.
+3. `verify`: your `global.command` settings (lint, build, test) run, and an independent tester writes and runs acceptance tests. Failures go back to the builder.
+4. `review`: reviewers with `at: review` run in parallel. Any **Important** finding sends the job back to the builder, until `global.pipeline.max_rounds` rounds (default 3; a round is one pass of build, verify and review) are used, then `needs-human`.
 5. `merge`: reviewers with `at: merge`, CI, rules, then the `merge` gate (default: human).
 
-When a job is `needs-human` or `failed`, `/sdlc:status` shows the command that moves it forward.
+When a job is human required (a decision, a stalemate between agents, a failure), `/sdlc:status` shows the command that moves it forward.
 
 ## Reviewers
 
@@ -33,7 +33,9 @@ Each reviewer is a markdown file in `.claude/reviewers/`. Its **frontmatter hold
 
 ```yaml
 # SDLC.md
-reviewers: [.claude/reviewers/code.md, .claude/reviewers/security.md, .claude/reviewers/a11y.md]
+review:
+  reviewer:
+    list: [.claude/reviewers/code.md, .claude/reviewers/security.md, .claude/reviewers/a11y.md]
 ```
 
 ```markdown
@@ -59,8 +61,27 @@ The type comes from one extra frontmatter key, or none:
 | Command | `run: "npx license-checker --failOn GPL"` | Deterministic checks. Exit 0 = PASS, anything else = CHANGES with the output | none |
 | Built-in | `builtin: code-review` or `security-review` | Claude Code's own reviews. They apply `REVIEW.md`; text in the body (outside `<!-- -->` comments) is added as extra instructions | tokens |
 
-`/sdlc:init` creates `code.md` and `security.md` as the starting reviewers. Add, edit or remove reviewers in the dashboard: `/sdlc:dashboard` → Settings → Reviewers. Saving writes the file straight away. Reviewers still written inline under `reviewers:` as a map keep working; the dashboard (or `sdlc.py reviewers convert`) converts them to files. Run `/sdlc:status --check` after editing by hand. Agents may not edit `SDLC.md`, `review-*.md`, `.claude/reviewers/**` or `.claude/agents/**` during a job.
+`/sdlc:init` creates `code.md` and `security.md` as the starting reviewers. Add, edit or remove reviewers in the dashboard: `/sdlc:dashboard` → Settings → Review. Saving writes the file straight away. Reviewers still written inline under `review.reviewer.list:` as a map keep working; the dashboard (or `sdlc.py reviewers convert`) converts them to files. Run `/sdlc:status --check` after editing by hand. Agents may not edit `SDLC.md`, `review-*.md`, `.claude/reviewers/**` or `.claude/agents/**` during a job.
+
+## Principles
+
+Principles say how the repo does things: architecture, design system, personas, security, testing. They are markdown files in `.claude/principles/`; `/sdlc:init` creates empty starters. Fill them in, add your own, or edit and remove them in the dashboard: `/sdlc:dashboard` → Settings → Global → Principles. Each file's frontmatter has a `summary`, `applies_to` (which agents see it; empty = all) and an optional `when` (for example `touches-ui`). Agents are pointed at the applicable ones in their brief and read what is relevant. Files with no text yet are skipped. Agents can't edit them.
+
+## Critical thinking
+
+Agents can question their instructions before acting, and push back with evidence instead of complying silently. The level is a setting (`global.pipeline.critical_thinking`, default 1); each stage (`<stage>.agent.critical_thinking`) and each reviewer can set their own. Higher levels cost more tokens and rounds.
+
+| Level | Name | What the agent does |
+|---|---|---|
+| 0 | Off | Follows instructions as given. Nothing is added to its brief. |
+| 1 | Flag | Raises an objection only when an instruction clearly contradicts the spec, the code or the repo's rules. |
+| 2 | Check | Checks instructions against the spec, the code and the rules; flags contradictions and gaps. |
+| 3 | Challenge | Questions instructions, specs and earlier findings. Pushes back on weak points, with evidence for each objection. |
+| 4 | Sceptical | Assumes there are mistakes until checked. Pushes back early and says what would change its mind. |
+| 5 | Adversarial | Challenges every assumption, including the task itself. Proposes a better approach before starting. |
+
+Objections go through the channel the role already has: the builder disputes a finding, the tester flags a spec gap, a reviewer keeps or withdraws a finding. When the builder disputes something and the reviewer or tester keeps it, neither side will move, so the job is **human required** (a stalemate) and you decide.
 
 ## Config
 
-Everything repo-specific is in the frontmatter of `SDLC.md`, and only values that differ from defaults are stored. Edit it by hand, or in the dashboard Settings tab (it shows a diff before saving). Common settings: `commands.*`, `gates.spec|merge`, `max_rounds`, `merge_strategy` (`squash` default, `merge`, `rebase`), `models.*`, `budgets.*`, `reviewers`, `learning`, `protected_paths`. Full list: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py config`.
+Everything repo-specific is in the frontmatter of `SDLC.md`, and only values that differ from defaults are stored. Edit it by hand, or in the dashboard Settings tab (it shows a diff before saving). Every setting is named `<tab>.<section>.<setting>` (three levels in `SDLC.md`), and the dashboard shows it by the last part under a block for its section. The tabs are `global` and one per stage: `spec`, `implement`, `test`, `review`, `release`. Each stage has an `agent` section (`model`, `critical_thinking`: 0–5, default 1 from `global.pipeline`, how hard it questions its instructions) and a `budget` section (`tokens`). Others: `spec.gate.mode` and `release.gate.mode` (`none` or `human`), `spec.format.sections`, `test.scope.paths`, `test.verify.*`, `review.severity.nits_block`, `review.reviewer.list`, `release.merge.*` (strategy, message, delete_branch), `release.pr.*` (draft, labels, reviewers), `release.ci.required`, `release.cleanup.worktree`, `release.host`. `global` holds `pipeline` (`max_rounds`, `critical_thinking`, `judge_model`, `agent_attempts`), `learning` (`mode`, `on`), `repo` (branches, `branch_name`, folders), `command` (`setup`, `build`, `lint`, `test`, `timeout`), `board`, `budget`, `dashboard.stall_after`, `wait` (`interval`, `max_hours`), `guardrail` and `principle.list`. Full list: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py config`.

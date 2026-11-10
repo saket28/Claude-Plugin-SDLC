@@ -15,6 +15,8 @@ import re
 import secrets
 from pathlib import Path
 
+DEFAULT_BRANCH_NAME = "{prefix}job-{id}"      # keep equal to config.DEFAULTS (a test checks)
+
 
 def now():
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -69,14 +71,15 @@ def slug(text, n=40):
 
 
 def alert_for(e):
-    """The alert an event raises, or None: needs-human, failed, error, budget warning, done."""
+    """The alert an event raises, or None. There is one kind of "a person must act" alert, `human`
+    (a decision, a failure or an error); the rest are information: budget warning, done."""
     t = e.get("type")
     if t == "needs_human":
-        kind, text = "needs-human", f"Needs a human ({e.get('reason')}): {e.get('detail', '')}".strip()
+        kind, text = "human", f"Human required ({e.get('reason')}): {e.get('detail', '')}".strip()
     elif t == "failed":
-        kind, text = "failed", f"Failed: {e.get('reason', '')}"
+        kind, text = "human", f"Human required (failed): {e.get('reason', '')}"
     elif t == "error":
-        kind, text = "error", f"Error in {e.get('stage', 'pipeline')}: {e.get('detail', '')}"
+        kind, text = "human", f"Human required (error in {e.get('stage', 'pipeline')}): {e.get('detail', '')}"
     elif t == "budget" and e.get("level") == "warn":
         kind, text = "budget-warning", f"Budget warning ({e.get('scope')}): {e.get('used'):,} of {e.get('limit'):,} tokens"
     elif t == "stage" and e.get("stage") == "done":
@@ -110,8 +113,11 @@ class Store:
         job_id = job_id or self.new_job_id()
         d = self.job_dir(job_id)
         d.mkdir(parents=True, exist_ok=False)
-        prefix = self.cfg["branch_prefix"]
-        branch = f"{prefix}job-{job_id}" if job_id.isdigit() else f"{prefix}{job_id}"
+        prefix, template = self.cfg.v("global.repo.branch_prefix"), self.cfg.v("global.repo.branch_name")
+        if template == DEFAULT_BRANCH_NAME and not job_id.isdigit():
+            branch = f"{prefix}{job_id}"                    # a ticket id from a remote board is the name
+        else:
+            branch = template.format(prefix=prefix, id=job_id, slug=slug(title))
         meta = {
             "id": job_id, "title": title, "source": source or title, "created": now(),
             "branch": branch,

@@ -171,8 +171,13 @@ class GitHubHost(Adapter):
         pr = self._existing(branch)
         if pr and pr["state"] == "OPEN":
             return {"pr": pr["url"], "number": pr["number"]}
+        opts = (["--draft"] if self.cfg.v("release.pr.draft") else [])
+        for label in self.cfg.v("release.pr.labels"):
+            opts += ["--label", label]
+        for reviewer in self.cfg.v("release.pr.reviewers"):
+            opts += ["--reviewer", reviewer]
         self.gh("pr", "create", "--head", branch, "--base", base, "--title", title,
-                "--body-file", body_file)
+                "--body-file", body_file, *opts)
         pr = self._existing(branch)
         return {"pr": pr["url"], "number": pr["number"]}
 
@@ -202,11 +207,13 @@ class GitHubHost(Adapter):
                     "reason": (r.stderr or "").strip()[:500]}
         return {"updated": True}
 
-    def op_merge(self, branch, strategy="squash", **_):
+    def op_merge(self, branch, strategy="squash", message="", delete_branch=True, **_):
         if self.op_pr_status(branch=branch).get("merged"):
             return {"merged": True}
-        r = self.gh("pr", "merge", branch, "--" + (strategy if strategy in ("squash", "merge", "rebase")
-                                                    else "squash"), "--delete-branch", check=False)
+        strategy = strategy if strategy in ("squash", "merge", "rebase") else "squash"
+        extra = (["--subject", message] if message and strategy != "rebase" else []) + (
+            ["--delete-branch"] if delete_branch else [])
+        r = self.gh("pr", "merge", branch, "--" + strategy, *extra, check=False)
         if r.returncode != 0:
             return {"merged": False, "reason": (r.stderr or r.stdout).strip()[:500]}
         return {"merged": True}
@@ -251,7 +258,7 @@ class FilesBoard(Adapter):
 
 
 def host(cfg):
-    s = cfg["host"]
+    s = cfg.v("release.host")
     name = s.get("adapter")
     cls = {"local": LocalHost, "github": GitHubHost}.get(name, LocalHost)
     a = cls(cfg, s)
@@ -261,7 +268,7 @@ def host(cfg):
 
 
 def board(cfg):
-    s = cfg["board"]
+    s = cfg.v("global.board")
     if s.get("adapter") == "github":
-        raise AdapterError("the github board adapter arrives in v2; use `board: {adapter: files}`")
+        raise AdapterError("the github board adapter arrives in v2; use `global.board: {adapter: files}`")
     return FilesBoard(cfg, s)

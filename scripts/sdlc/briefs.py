@@ -46,13 +46,49 @@ def answers(cfg):
     return [e["line"] for e in parse_entries(body.get("Answers", ""))]
 
 
-def write(cfg, path, meta, role, sections):
-    """sections: list of (title, text) in order, appended after the stable part."""
+STANCE = {
+    1: "Follow your instructions. If one clearly contradicts the spec, the code or the repo's rules, "
+       "say so instead of complying silently.",
+    2: "Before acting, check your instructions against the spec, the code and the repo's rules. "
+       "Flag contradictions and gaps, and say what you did about each.",
+    3: "Do not take instructions, specs or earlier findings on trust. Look for what is wrong, "
+       "missing or under-specified, and push back on weak points. Every objection must cite a file, "
+       "line or spec clause and say what you would change.",
+    4: "Be sceptical by default. Assume the instructions, the spec and earlier work contain "
+       "mistakes until you have checked. Push back early and say what would change your mind. "
+       "Cite evidence for every objection.",
+    5: "Challenge every assumption, including the task itself. If the approach is wrong, say so "
+       "and propose a better one before doing the work. Cite evidence for every objection.",
+}
+STANCE_TAIL = ("Use the channel your role already has (a dispute, a question, a finding, a spec gap) "
+               "for each objection. Do not invent objections: with no evidence, do the work. "
+               "If you disagree, still do the part you can; block only on a real conflict.")
+
+
+def stance(level):
+    return f"{STANCE[level]} {STANCE_TAIL}" if level else ""
+
+
+def write(cfg, path, meta, role, sections, principles=()):
+    """sections: list of (title, text) in order, appended after the stable part.
+    principles: [{path, summary}] the agent should know about (see principles.py).
+    meta may carry `critical_thinking` (a reviewer's own level); it is not written to the brief."""
     body = cfg.body_sections()
+    meta = dict(meta)
+    level = meta.pop("critical_thinking", None)      # a reviewer's own level beats its stage's
+    if level is None:
+        level = cfg.critical_thinking(role)
     parts = ["---", yamlish.dumps(meta), "---", ""]
+    if level:
+        parts += [f"## Working stance (critical thinking {level} of 5)", stance(level), ""]
     rules = body.get("Pipeline rules", "").strip()
     if rules:
         parts += ["## Pipeline rules (from SDLC.md)", rules, ""]
+    if principles:
+        parts += ["## Principles for this repo",
+                  "How this repo does things. Read the ones relevant to your task before you start, and "
+                  "name the one behind any objection you raise.",
+                  *[f"- `{p['path']}`" + (f": {p['summary']}" if p.get("summary") else "") for p in principles], ""]
     ans = answers(cfg)
     if ans:
         parts += ["## Answers already given (do not ask these again)", *ans, ""]

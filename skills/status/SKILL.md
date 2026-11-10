@@ -9,5 +9,5 @@ allowed-tools: Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" *)
 !`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" status $ARGUMENTS || true`
 
 Summarize this for the user as a compact table (job, title, status, round, tokens). Call out
-anything that is needs-human, failed or waiting, with the command that moves it forward.
+anything that is human-required (stalled, failed or needing a decision) or waiting, with the command that moves it forward.
 For --check output, list the issues and offer to fix the simple ones.

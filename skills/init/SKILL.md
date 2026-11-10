@@ -17,8 +17,8 @@ Detected so far:
    GitHub.cli` on Windows, the distro package on Linux). If they install it, ask them to run
    `! gh auth login` themselves. If they decline, the host becomes `local`.
 3. Write the settings that differ from the defaults (only those) as JSON to a temp file, for
-   example `{"commands": {...}, "test_paths": [...], "host": {"adapter": "local"}}`, and run
-   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" init --write <file>`. It also creates `.claude/reviewers/code.md` and `security.md` (the built-in reviewers) and lists them in SDLC.md. Record each answer the user gave under `## Answers` in SDLC.md
+   example `{"global": {"command": {"setup": "...", "build": "...", "lint": "...", "test": "..."}}, "test": {"scope": {"paths": [...]}}, "release": {"host": {"adapter": "local"}}}` (the detected `global` and `test` objects are already in this shape), and run
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" init --write <file>`. It also creates `.claude/reviewers/code.md` and `security.md` (the built-in reviewers) and lists them in SDLC.md. It also creates empty starter principles in `.claude/principles/` (architecture, design-system, personas, security, testing) and lists them under `global.principle.list`; tell the user to fill them in, or offer to draft the architecture one from what you can see in the repo. Record each answer the user gave under `## Answers` in SDLC.md
    as `- [A-xxxx] all · Question? Answer. (init)`.
 4. Offer to turn on Claude Code's Bash sandbox in the user's settings, explaining that it limits
    where agents' shell commands can write. Only change settings if they agree.

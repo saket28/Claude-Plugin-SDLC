@@ -34,7 +34,7 @@ print(out)
 
 class GitHubHostTest(unittest.TestCase):
     def setUp(self):
-        self.repo = make_repo("---\nhost: { adapter: github }\n---\n")
+        self.repo = make_repo("---\nrelease:\n  host: { adapter: github }\n---\n")
         self.addCleanup(shutil.rmtree, self.repo.parent, ignore_errors=True)
         bindir = self.repo.parent / "bin"
         bindir.mkdir()
@@ -86,9 +86,30 @@ class GitHubHostTest(unittest.TestCase):
         self.assertTrue(self.host.call("merge", branch="b")["merged"])     # already merged: no second merge
         self.assertEqual(sum(1 for c in self.gh_state()["calls"] if c[:2] == ["pr", "merge"]), 2)
 
+    def test_pr_options_and_merge_flags_come_from_settings(self):
+        repo = make_repo("---\nrelease:\n  host: { adapter: github }\n  pr: { draft: true, labels: [sdlc, ai], reviewers: [alice] }\n"
+                         "  merge: { delete_branch: false }\n---\n")
+        self.addCleanup(shutil.rmtree, repo.parent, ignore_errors=True)
+        h = adapters.host(config.load(repo))
+        h.call("open_pr", branch="sdlc/job-7", base="main", title="t", body_file=str(self.body))
+        create = [c for c in self.gh_state()["calls"] if c[:2] == ["pr", "create"]][-1]
+        self.assertIn("--draft", create)
+        self.assertEqual([create[i + 1] for i, x in enumerate(create) if x == "--label"], ["sdlc", "ai"])
+        self.assertEqual([create[i + 1] for i, x in enumerate(create) if x == "--reviewer"], ["alice"])
+        self.set_view()
+        h.call("merge", branch="b", strategy="squash", message="feat: x [7]", delete_branch=False)
+        merge = [c for c in self.gh_state()["calls"] if c[:2] == ["pr", "merge"]][-1]
+        self.assertEqual(merge[merge.index("--subject") + 1], "feat: x [7]")
+        self.assertNotIn("--delete-branch", merge)
+        self.set_view(state="OPEN")
+        h.call("merge", branch="c", strategy="rebase", message="ignored", delete_branch=True)
+        merge = [c for c in self.gh_state()["calls"] if c[:2] == ["pr", "merge"]][-1]
+        self.assertNotIn("--subject", merge)                      # a rebase merge has no commit message
+        self.assertIn("--delete-branch", merge)
+
     def test_command_override_for_one_operation(self):
-        repo = make_repo("---\nhost:\n  adapter: github\n  ops:\n"
-                         "    merge: \"printf '{\\\"merged\\\": true, \\\"via\\\": \\\"%s\\\"}' {branch}\"\n---\n")
+        repo = make_repo("---\nrelease:\n  host:\n    adapter: github\n    ops:\n"
+                         "      merge: \"printf '{\\\"merged\\\": true, \\\"via\\\": \\\"%s\\\"}' {branch}\"\n---\n")
         self.addCleanup(shutil.rmtree, repo.parent, ignore_errors=True)
         h = adapters.host(config.load(repo))
         r = h.call("merge", branch="sdlc/job-9")

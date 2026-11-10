@@ -65,9 +65,10 @@
   .tok i { display:block; height:100%; background:var(--accent); }
   .alert { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-radius:6px; background:var(--chip); margin:4px 0; font-size:13px; }
   .alert .k { font-size:11px; font-weight:600; text-transform:uppercase; min-width:92px; }
-  .alert.failed .k, .alert.error .k { color:var(--fail); } .alert.done .k { color:var(--pass); } .alert.needs-human .k, .alert.budget-warning .k { color:var(--wait); }
+  .alert.human .k, .alert.failed .k, .alert.error .k, .alert.needs-human .k { color:var(--fail); } .alert.done .k { color:var(--pass); } .alert.budget-warning .k { color:var(--wait); }
   .alert .x { margin-left:auto; cursor:pointer; color:var(--muted); background:none; border:0; font:inherit; }
   .bell { display:inline-flex; align-items:center; gap:3px; margin-left:6px; color:var(--wait); font-size:11px; vertical-align:middle; }
+  .bell.human { color:var(--fail); }
   .bell svg { width:15px; height:15px; }
   .muted { color:var(--muted); }
   #drawer { position:fixed; top:0; right:0; width:min(720px, 100%); height:100%; background:var(--panel); border-left:1px solid var(--line);
@@ -121,6 +122,10 @@
   .diff .add { color:var(--pass); } .diff .del { color:var(--fail); }
   .entry { display:flex; gap:8px; align-items:flex-start; padding:4px 0; font-size:13px; }
   .entry code { color:var(--muted); }
+  .subtabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:14px; }
+  .subtabs button { background:none; border:0; border-bottom:2px solid transparent; padding:7px 12px; color:var(--muted); font:inherit; cursor:pointer; }
+  .subtabs button.on { color:var(--ink); border-bottom-color:var(--accent); }
+  .subtabs button.dirty::after { content:" \2022"; color:var(--accent); }
 </style>
 </head>
 <body>
@@ -146,7 +151,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? Math.round(n/1e3)+"k" : String(n||0);
 const dur = s => s == null ? "" : s < 90 ? s+"s" : s < 5400 ? Math.round(s/60)+"m" : (s/3600).toFixed(1)+"h";
 const ALERT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1z" fill="currentColor"/><path d="M8 6v4M8 11.6v.9" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>';
-const LABELS = {queued:"Backlog", spec:"Spec", build:"Build", verify:"Verify", review:"Review", "needs-human":"Needs human", merge:"Merge", done:"Done"};
+const LABELS = {queued:"Backlog", spec:"Spec", build:"Build", verify:"Verify", review:"Review", merge:"Merge", done:"Done"};
 
 function meter(el, used, limit) {
   const f = limit ? used/limit : 0; el.style.width = Math.min(100, f*100)+"%";
@@ -185,11 +190,10 @@ const saveBacklog = id => postBacklog({action: id ? "update" : "add", id,
 const delBacklog = id => confirm("Delete this backlog item?") && postBacklog({action:"delete", id});
 
 function card(j) {
-  const badge = j.gate ? `<span class="badge">${esc(j.gate)} gate</span>` :
-                j.status === "failed" ? `<span class="badge fail">failed</span>` : "";
+  const badge = j.gate ? `<span class="badge">${esc(j.gate)} gate</span>` : "";
   const f = j.budget ? Math.min(100, j.tokens/j.budget*100) : 0;
   return `<div class="card" onclick="openJob('${esc(j.id)}')">
-    <div class="id">job-${esc(j.id)}${j.round > 1 ? " · r"+j.round : ""} ${j.stalled ? "· ⏸ stalled?" : ""}${j.alerts ? `<span class="bell" title="${j.alerts} alert(s) to check">${ALERT_ICON}<b>${j.alerts}</b></span>` : ""}</div>
+    <div class="id">job-${esc(j.id)}${j.round > 1 ? " · r"+j.round : ""} ${j.stalled ? "· ⏸ stalled?" : ""}${j.human || j.alerts ? `<span class="bell${j.human ? " human" : ""}" title="${j.human ? "Human required: " + esc(j.human) + (j.alerts ? " · " : "") : ""}${j.alerts ? j.alerts + " alert(s)" : ""}">${ALERT_ICON}${j.alerts ? `<b>${j.alerts}</b>` : ""}</span>` : ""}</div>
     <div class="t">${esc(j.title)}</div>
     ${badge}
     <div class="tok" title="${fmt(j.tokens)} of ${fmt(j.budget)} tokens"><i style="width:${f}%"></i></div></div>`;
@@ -206,7 +210,7 @@ async function loadBoard() {
     `Last ${t.jobs} done: avg ${fmt(t.avg_tokens)} tokens/job · first-pass ${Math.round(t.first_pass*100)}%` : "";
   const active = b.jobs.filter(j => j.status !== "cancelled");
   document.getElementById("board").innerHTML = b.columns.map(c => {
-    const js = active.filter(j => (j.status === "done" ? "done" : j.status === "needs-human" ? "needs-human" : j.stage) === c);
+    const js = active.filter(j => (j.status === "done" ? "done" : j.stage) === c);
     const q = c === "queued";
     const extra = q ? b.backlog_items.map(blCard).join("") + `<button class="addcard" onclick="openBacklog()">+ Add a card</button>` : "";
     BACKLOG = b.backlog_items;
@@ -254,14 +258,19 @@ function timelineHtml(j) {
 function needsYouHtml(j) {
   const h = j.help;
   if (!h || !h.actions || !h.actions.length || ["done", "cancelled"].includes(j.status)) return "";
-  return `<div class="helpbox${j.status === "failed" ? " fail" : ""}"><b>${esc(h.title)}</b>${h.explain ? `<div class="muted">${esc(h.explain)}</div>` : ""}
+  return `<div class="helpbox${j.human ? " fail" : ""}"><b>${esc(h.title)}</b>${h.explain ? `<div class="muted">${esc(h.explain)}</div>` : ""}
     ${h.actions.map(a => `<div>Run <code title="Click to copy" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.textContent)">${esc(a.cmd)}</code>${a.note ? ` <span class="muted">to ${esc(a.note)}</span>` : ""}</div>`).join("")}</div>`;
 }
 function alertsHtml(j) {
   const need = needsYouHtml(j);
   if (!j.alerts.length) return need;
-  const rows = j.alerts.slice().reverse().map(a => `<div class="alert ${esc(a.kind)}"><span class="k">${esc(a.kind)}</span><span>${esc(a.text)} <small class="muted">${esc(a.ts ? new Date(a.ts).toLocaleString() : "")}</small></span><button class="x" title="Clear" onclick="clearAlerts('${esc(j.id)}', ['${esc(a.id)}'])">×</button></div>`).join("");
+  const rows = j.alerts.slice().reverse().map(a => `<div class="alert ${esc(a.kind)}"><span class="k">${esc(["human", "needs-human", "failed", "error"].includes(a.kind) ? "human required" : a.kind)}</span><span>${esc(a.text)} <small class="muted">${esc(a.ts ? new Date(a.ts).toLocaleString() : "")}</small></span><button class="x" title="Clear" onclick="clearAlerts('${esc(j.id)}', ['${esc(a.id)}'])">×</button></div>`).join("");
   return `<h3>Alerts <button class="secondary" style="float:right;padding:2px 8px" onclick="clearAlerts('${esc(j.id)}')">Clear all</button></h3>${need}${rows}`;
+}
+async function delJob(id) {
+  if (!confirm(`Delete job-${id}? Its timeline, reports and alerts are removed. The merged code is not touched.`)) return;
+  try { await api("/api/job/delete", {method: "POST", body: JSON.stringify({id})}); closeDrawer(); loadBoard(); }
+  catch (e) { alert(e.message); }
 }
 async function clearAlerts(job, ids) {
   await api("/api/alerts/clear", {method: "POST", body: JSON.stringify({job, ids})});
@@ -274,13 +283,14 @@ async function openJob(id) {
   const rw = ` of max ${j.max_rounds}`;
   document.getElementById("drawer-body").innerHTML = `
     <h2 style="margin-top:0">job-${esc(j.id)}: ${esc(j.title)}</h2>
-    <div class="muted">${esc(j.status)} · round ${j.round}${rw} · ${fmt(j.tokens)} / ${fmt(j.budget)} tokens · ${esc(j.branch)} ${j.pr ? "· <a href='"+esc(j.pr)+"' target=_blank>PR</a>" : ""}</div>
+    <div class="muted">${esc(j.status)}${j.human ? " · human required: " + esc(j.human) : ""} · round ${j.round}${rw} · ${fmt(j.tokens)} / ${fmt(j.budget)} tokens · ${esc(j.branch)} ${j.pr ? "· <a href='"+esc(j.pr)+"' target=_blank>PR</a>" : ""}</div>
     ${j.source ? `<h3>Request</h3><pre class="md">${esc(j.source)}</pre>` : ""}
     <div class="muted">Created ${esc(j.created ? new Date(j.created).toLocaleString() : "")}${j.owner ? " by " + esc(j.owner) : ""}</div>
     ${alertsHtml(j)}
     <h3>Timeline <small class="muted">click a step for details</small></h3>${timelineHtml(j)}
     ${blocks ? `<h3>Errors and guardrail blocks</h3><table>${blocks}</table>` : ""}
-    ${j.applied.length ? `<h3>Learnings applied</h3><p>${j.applied.map(esc).join(", ")}</p>` : ""}`;
+    ${j.applied.length ? `<h3>Learnings applied</h3><p>${j.applied.map(esc).join(", ")}</p>` : ""}
+    ${j.status === "done" ? `<div class="actions"><button class="danger" onclick="delJob('${esc(j.id)}')">Delete this job</button></div>` : ""}`;
   document.getElementById("drawer").classList.add("open");
 }
 async function openFile(job, path, i) {
@@ -289,25 +299,29 @@ async function openFile(job, path, i) {
 }
 document.addEventListener("mousedown", e => {
   const d = document.getElementById("drawer");
-  if (d.classList.contains("open") && !d.contains(e.target) && !e.target.closest(".card, .addcard, #rv-add, [data-keep-drawer]")) closeDrawer();
+  if (d.classList.contains("open") && !d.contains(e.target) && !e.target.closest(".card, .addcard, #rv-add, #pp-add, [data-keep-drawer]")) closeDrawer();
 });
 function closeDrawer() { document.getElementById("drawer").classList.remove("open"); history.replaceState(null, "", location.pathname + location.search); }
 
 /* ---------------- Settings ---------------- */
-let S = null, changes = {};
+let S = null, changes = {}, curSub = "global";
 const get = (o, p) => p.split(".").reduce((a, k) => a == null ? a : a[k], o);
 const isSet = (o, p) => get(o, p) !== undefined;
 
+const optLabel = (f, o) => (f.option_labels || {})[String(o)] ? o + " · " + f.option_labels[String(o)] : String(o);
 function inputFor(f, eff) {
   const v = get(eff, f.path), id = "f-"+f.path;
+  if (f.type === "bool")
+    return `<select id="${id}" data-path="${f.path}" data-type="bool"><option value="true" ${v === true ? "selected" : ""}>on</option><option value="false" ${v === false ? "selected" : ""}>off</option></select>`;
   if (f.type === "enum") {
-    const opts = [...f.options]; if (v != null && !opts.includes(v)) opts.push(v);
-    return `<select id="${id}" data-path="${f.path}" data-type="enum">${opts.map(o => `<option ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
+    const opts = f.options.map(String), cur = v == null ? "" : String(v);
+    if (cur !== "" && !opts.includes(cur)) opts.push(cur);
+    const inh = f.inherits ? `<option value="" ${cur === "" ? "selected" : ""}>inherit (${esc(optLabel(f, get(eff, f.inherits)))})</option>` : "";
+    return `<select id="${id}" data-path="${f.path}" data-type="enum" data-vt="${f.value_type || ""}">${inh}${opts.map(o => `<option value="${esc(o)}" ${o === cur ? "selected" : ""}>${esc(optLabel(f, o))}</option>`).join("")}</select>`;
   }
   if (f.type === "list") return `<textarea id="${id}" rows="3" data-path="${f.path}" data-type="list" placeholder="one per line">${esc((v||[]).filter(x => !f.additive || !(get(S.defaults, f.path)||[]).includes(x)).join("\n"))}</textarea>`;
-  if (f.type === "gate") return `<input id="${id}" data-path="${f.path}" data-type="gate" value="${esc(typeof v === "object" && v ? "human_when: "+v.human_when : v)}">`;
   const t = f.type === "int" || f.type === "float" ? "number" : "text";
-  return `<input id="${id}" type="${t}" ${f.type==="float"?'step="0.05"':''} data-path="${f.path}" data-type="${f.type}" value="${esc(v ?? "")}">`;
+  return `<input id="${id}" type="${t}" ${f.type==="float"?'step="0.05"':''} ${f.min!=null?`min="${f.min}"`:''} ${f.max!=null?`max="${f.max}"`:''} data-path="${f.path}" data-type="${f.type}" value="${esc(v ?? "")}">`;
 }
 
 function parseField(el) {
@@ -315,7 +329,8 @@ function parseField(el) {
   if (t === "int") return v === "" ? null : parseInt(v, 10);
   if (t === "float") return v === "" ? null : parseFloat(v);
   if (t === "list") return v ? v.split("\n").map(x => x.trim()).filter(Boolean) : null;
-  if (t === "gate") return v.startsWith("human_when:") ? {human_when: v.slice(11).trim()} : v;
+  if (t === "bool") return v === "true";
+  if (t === "enum" && el.dataset.vt === "int") return v === "" ? null : parseInt(v, 10);
   return v === "" ? null : v;
 }
 
@@ -327,19 +342,20 @@ function validRule(r) {
 
 /* ---- reviewers: files in .claude/reviewers/, summary list here, editor in the side panel ---- */
 const TYPES = {instructions: "Instructions", agent: "Agent", run: "Command"};
-const TRIGGERS = {spec: "Spec: reviews the spec before any code", review: "Review: after build and verify", merge: "Merge: on the final diff"};
+const TRIGGER_LABELS = {spec: "Spec: reviews the spec before any code", review: "Review: after build and verify", merge: "Merge: on the final diff"};
+const rf = key => S.schema.reviewer_fields.find(x => x.key === key);
 const rvKind = r => r.builtin ? "builtin" : r.agent != null ? "agent" : r.run != null ? "run" : "instructions";
 const rvMsg = (m, bad) => { const e = document.getElementById("err-reviewers"); if (e) { e.textContent = bad ? m : ""; } if (!bad) status(m); };
 async function rvReload() {   // refresh only the reviewer part, so unsaved settings edits are kept
   const n = await api("/api/settings");
-  S.effective.reviewers = n.effective.reviewers; S.problems = n.problems; S.reviewers_mode = n.reviewers_mode;
+  S.effective.review.reviewer.list = n.effective.review.reviewer.list; S.problems = n.problems; S.reviewers_mode = n.reviewers_mode;
   rvRender();
 }
 const EDIT_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2.5l2.5 2.5L5.5 13H3v-2.5z"/></svg>';
 const DEL_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 8.5h6.6l.7-8.5"/></svg>';
 function rvRender() {
   const files = S.reviewers_mode === "files", prob = Object.fromEntries((S.problems || []).map(p => [p.name, p]));
-  const rows = Object.entries(S.effective.reviewers).map(([n, r]) => {
+  const rows = Object.entries(S.effective.review.reviewer.list).map(([n, r]) => {
     const k = rvKind(r), off = r.when === "never" && !r.condition;
     const type = k === "builtin" ? "Built-in /" + r.builtin : k === "run" ? "Command: " + r.run : TYPES[k];
     const when = off ? "off" : [r.when || (r.condition ? "" : "always"), r.condition ? "or: " + r.condition : ""].filter(Boolean).join(" ");
@@ -349,7 +365,7 @@ function rvRender() {
       <td class="rv-act"><a title="Edit" onclick="rvEdit('${esc(n)}')">${EDIT_ICON}</a><a class="del" title="Delete" onclick="rvRemove('${esc(n)}')">${DEL_ICON}</a></td></tr>`;
   }).join("");
   const banner = "";
-  const bad = (S.problems || []).filter(p => !S.effective.reviewers[p.name]).map(p => `<tr><td><span class="rv-err" title="${esc(p.error)}" onclick="status('${esc(p.file)}: ${esc(p.error)}')">⚠</span> <b>${esc(p.name)}</b></td>
+  const bad = (S.problems || []).filter(p => !S.effective.review.reviewer.list[p.name]).map(p => `<tr><td><span class="rv-err" title="${esc(p.error)}" onclick="status('${esc(p.file)}: ${esc(p.error)}')">⚠</span> <b>${esc(p.name)}</b></td>
       <td colspan="3" class="muted"><span class="rv-file">${esc(p.file)}</span> <span class="rv-errtext">${esc(p.error)}</span></td><td></td></tr>`).join("");
   document.getElementById("rv-list").innerHTML = `${banner}
     <table><tr><th>Name</th><th>Type</th><th>Trigger</th><th>When</th><th></th></tr>${rows}${bad}</table>`;
@@ -364,7 +380,7 @@ async function rvEnsureFiles() {   // inline reviewers are converted to files th
 }
 async function rvEdit(name) {
   if (!(await rvEnsureFiles())) return;
-  const r = name ? S.effective.reviewers[name] : {}, k = name ? rvKind(r) : "instructions";
+  const r = name ? S.effective.review.reviewer.list[name] : {}, k = name ? rvKind(r) : "instructions";
   EDIT = {name, kind: k, buf: {instructions: null, agent: null, run: r.run || "", builtin: r.body || ""}};
   if (k === "instructions" && name) EDIT.buf.instructions = r.body || "";
   if (k === "agent") EDIT.buf.agent = (await api("/api/reviewer?name=" + encodeURIComponent(name))).content || rvTemplate("agent", r.agent);
@@ -375,13 +391,14 @@ async function rvEdit(name) {
     ${name ? "" : row("Name", `<input id="rv-name" placeholder="e.g. a11y" oninput="rvNameChanged()">`, "Letters, digits, - and _. Becomes .claude/reviewers/&lt;name&gt;.md")}
     ${builtin ? row("Type", `<span class="muted">Built-in /${esc(r.builtin)}; it uses REVIEW.md</span>`) :
       row("Type", `<select id="rv-kind" onchange="rvKindChanged()">${Object.entries(TYPES).map(([o, l]) => opt(o, k, l)).join("")}</select>`)}
-    ${row("Trigger", `<select id="rv-at">${Object.entries(TRIGGERS).map(([o, l]) => opt(o, at, l)).join("")}${!TRIGGERS[at] ? opt(at, at) : ""}</select>`, "When in the pipeline this reviewer runs")}
+    ${row("Trigger", `<select id="rv-at">${rf("at").options.map(o => opt(o, at, TRIGGER_LABELS[o])).join("")}${!rf("at").options.includes(at) ? opt(at, at) : ""}</select>`, "When in the pipeline this reviewer runs")}
     ${row("When", `<textarea id="rv-when" rows="2" placeholder="always">${esc(r.when || "")}</textarea>`, "always, never, touches-ui, risk>=medium, paths:[globs], joined with 'or'")}
     ${row("Condition", `<textarea id="rv-cond" rows="3" placeholder="plain-language condition">${esc(r.condition || "")}</textarea>`, "Judged per job; the reviewer runs if When matches or this is true")}
     ${row("<span id='rv-vlabel'></span>", `<textarea id="rv-val" rows="14" spellcheck="false" oninput="EDIT.buf[EDIT.kind] = this.value"></textarea>`, "<span id='rv-vhelp'></span><div id='rv-path'></div>")}
     ${row("Blocking", `<label><input type="checkbox" id="rv-block" ${r.blocking === false ? "" : "checked"} style="width:auto"> findings block merging (off = advisory)</label>`)}
-    <div id="rv-model-row">${row("Model", `<select id="rv-model"><option value="">default</option>${["opus", "sonnet", "haiku", "fable"].map(o => opt(o, r.model)).join("")}</select>`, "Which model runs this reviewer; default follows the models.reviewer setting")}</div>
-    ${r.builtin === "code-review" ? row("Effort", `<select id="rv-effort">${["low", "medium", "high", "xhigh", "max"].map(o => opt(o, r.effort || "high")).join("")}</select>`, "How hard /code-review looks") : ""}
+    <div id="rv-model-row">${row("Model", `<select id="rv-model"><option value="">default</option>${rf("model").options.map(o => opt(o, r.model)).join("")}</select>`, "Which model runs this reviewer; default follows review.agent.model")}
+    ${row("Critical thinking", `<select id="rv-ct"><option value="">default</option>${rf("critical_thinking").options.map(o => opt(String(o), r.critical_thinking == null ? "" : String(r.critical_thinking), optLabel(rf("critical_thinking"), o))).join("")}</select>`, "How hard it questions its instructions; default follows review.agent.critical_thinking")}</div>
+    ${r.builtin === "code-review" ? row("Effort", `<select id="rv-effort">${rf("effort").options.map(o => opt(o, r.effort || "high")).join("")}</select>`, "How hard /code-review looks") : ""}
     <div class="err" id="rv-err"></div>
     <div class="actions"><button class="primary" onclick="rvSave()">Save</button> <button class="secondary" onclick="closeDrawer()">Cancel</button></div>`;
   rvKindChanged(true);
@@ -398,7 +415,7 @@ function rvNameChanged() {
 }
 function rvPathNote() {
   const el = document.getElementById("rv-path"), k = EDIT.kind; if (!el) return;
-  const n = (EDIT.name || (document.getElementById("rv-name") || {}).value || "").trim() || "<name>", cur = EDIT.name && S.effective.reviewers[EDIT.name];
+  const n = (EDIT.name || (document.getElementById("rv-name") || {}).value || "").trim() || "<name>", cur = EDIT.name && S.effective.review.reviewer.list[EDIT.name];
   el.innerHTML = k === "run" ? "" : `<span class="muted">Stored in ${esc(k === "agent" ? `.claude/agents/${(cur && cur.agent) || n}.md` : (cur && cur.file) || `.claude/reviewers/${n}.md`)}</span>`;
 }
 function rvKindChanged(first) {
@@ -417,13 +434,14 @@ function rvKindChanged(first) {
 }
 async function rvSave() {
   const $ = id => document.getElementById(id), err = m => { $("rv-err").textContent = m; };
-  const orig = EDIT.name ? S.effective.reviewers[EDIT.name] : {}, k = EDIT.kind;
+  const orig = EDIT.name ? S.effective.review.reviewer.list[EDIT.name] : {}, k = EDIT.kind;
   const name = EDIT.name || $("rv-name").value.trim(), text = $("rv-val").value;
   const clean = v => v.trim().replace(/\s*\n\s*/g, " ");
   const front = {at: $("rv-at").value, when: clean($("rv-when").value), condition: clean($("rv-cond").value), blocking: $("rv-block").checked};
   if (!validRule(front.when)) return err("When: not a valid rule");
   if (k !== "run" && $("rv-model").value) front.model = $("rv-model").value;
   if ($("rv-effort")) front.effort = $("rv-effort").value;
+  if ($("rv-ct").value !== "") front.critical_thinking = parseInt($("rv-ct").value, 10);
   for (const f of ["timeout"]) if (orig[f] != null) front[f] = orig[f];
   let body = text, agent_content;
   if (k === "builtin") front.builtin = orig.builtin;
@@ -447,26 +465,94 @@ async function rvConvert() {
 
 async function loadSettings() {
   S = await api("/api/settings"); changes = {};
-  const groups = S.schema.groups.map(g => `<div class="group"><h3>${esc(g.title)}</h3>${g.fields.map(f => `
-    <div class="field" id="row-${f.path}"><label>${esc(f.path)}${isSet(S.overrides, f.path) ? '<span class="ov">overridden</span>' : ""}</label>
-    <div>${inputFor(f, S.effective)}<div class="help">${esc(f.help)}${f.usage === "month" ? " · used this month: "+fmt(S.usage.month) : ""}${f.additive ? " · built-in: "+esc((get(S.defaults, f.path)||[]).join(", ")) : ""}</div><div class="err" id="err-${f.path}"></div></div></div>`).join("")}</div>`).join("");
   const entries = list => list.length ? list.map(e => `<div class="entry" id="en-${esc(e.id)}"><code>${esc(e.id)}</code><span style="flex:1">${esc(e.roles.join(", "))} · ${esc(e.text)}</span><a class="ia" title="Edit" onclick="editLearning('${esc(e.id)}')">${EDIT_ICON}</a><a class="ia del" title="Delete" onclick="delLearning('${esc(e.id)}')">${DEL_ICON}</a></div>`).join("") : '<span class="muted">None</span>';
-  document.getElementById("settings-view").innerHTML = `${groups}
-    <div class="group"><h3>Reviewers <button class="secondary" id="rv-add" style="float:right" onclick="rvEdit(null)">+ Add reviewer</button></h3>
-      <div id="rv-list"></div><div class="err" id="err-reviewers"></div></div>
-    <div class="group"><h3>Learnings</h3>${entries(S.learnings.Learnings||[])}<h3 style="margin-top:12px">Answers</h3>${entries(S.learnings.Answers||[])}</div>
+  if (!S.schema.tabs.some(t => t.id === curSub)) curSub = "global";
+  const field = f => `
+    <div class="field" id="row-${f.path}"><label>${esc(f.path.split(".").slice(2).join("."))}${isSet(S.overrides, f.path) ? '<span class="ov">overridden</span>' : ""}</label>
+    <div>${inputFor(f, S.effective)}<div class="help">${esc(f.help)}${f.usage === "month" ? " · used this month: "+fmt(S.usage.month) : ""}${f.additive ? " · built-in: "+esc((get(S.defaults, f.path)||[]).join(", ")) : ""}</div><div class="err" id="err-${f.path}"></div></div></div>`;
+  const section = sec => sec.collection === "reviewers" ? `<div class="group"><h3>${esc(sec.title)} <button class="secondary" id="rv-add" style="float:right" onclick="rvEdit(null)">+ Add reviewer</button></h3>
+      <div id="rv-list"></div><div class="err" id="err-reviewers"></div></div>`
+    : sec.collection === "principles" ? `<div class="group"><h3>${esc(sec.title)} <button class="secondary" id="pp-add" style="float:right" onclick="ppEdit(null)">+ Add principle</button></h3>
+      <div class="help" style="margin:-4px 0 8px">How this repo does things. Agents are pointed at the ones that apply to them and read what is relevant. Files with no text yet are not shown to agents.</div>
+      <div id="pp-list"></div><div class="err" id="err-principles"></div></div>`
+    : `<div class="group"><h3>${esc(sec.title)}</h3>${sec.fields.map(field).join("")}</div>`;
+  const panels = S.schema.tabs.map(t => `<div class="tabpanel" id="sp-${t.id}" ${t.id === curSub ? "" : "hidden"}>${t.sections.map(section).join("")}
+    ${t.learnings ? `<div class="group"><h3>Learnings</h3>${entries(S.learnings.Learnings||[])}<h3 style="margin-top:12px">Answers</h3>${entries(S.learnings.Answers||[])}</div>` : ""}
+    </div>`).join("");
+  document.getElementById("settings-view").innerHTML = `<div class="subtabs">${S.schema.tabs.map(t => `<button id="st-${t.id}" class="${t.id === curSub ? "on" : ""}" onclick="subTab('${t.id}')">${esc(t.title)}</button>`).join("")}</div>
+    ${panels}
     <div class="actions"><button class="primary" onclick="preview()">Review changes</button><span class="muted" id="status"></span></div>
     <div id="diff"></div>`;
   document.querySelectorAll("[data-path]").forEach(el => el.addEventListener("input", () => {
     const v = parseField(el), p = el.dataset.path; changes[p] = v;
     document.getElementById("row-"+p).classList.add("changed");
+    document.getElementById("st-" + p.split(".")[0]).classList.add("dirty");
     const err = document.getElementById("err-"+p);
-    err.textContent = el.dataset.type === "gate" && typeof v === "object" && !validRule(v.human_when) ? "Not a valid rule" :
-                      el.dataset.type === "gate" && typeof v === "string" && !["auto","human"].includes(v) ? "auto, human, or human_when: <rule>" : "";
+    err.textContent = "";
   }));
-  rvRender();
+  rvRender(); ppRender();
 }
 
+/* ---- principles: files in .claude/principles/, a list in Global, editor in the side panel ---- */
+const ppMsg = (m, bad) => { const e = document.getElementById("err-principles"); if (e) e.textContent = bad ? m : ""; if (!bad) status(m); };
+async function ppReload() {
+  const n = await api("/api/settings");
+  S.effective.global.principle.list = n.effective.global.principle.list; S.principle_problems = n.principle_problems;
+  ppRender();
+}
+function ppRender() {
+  const el = document.getElementById("pp-list"); if (!el) return;
+  const specs = S.effective.global.principle.list || {};
+  const rows = Object.entries(specs).map(([n, p]) => {
+    const empty = !(p.body || "").replace(/<!--[\s\S]*?-->/g, "").trim();
+    const who = (p.applies_to && p.applies_to.length) ? p.applies_to.join(", ") : "all";
+    return `<tr><td><b>${esc(n)}</b>${empty ? ' <span class="muted" title="No text yet: agents are not shown this file">placeholder</span>' : ""}</td>
+      <td class="muted">${esc(p.summary || "")}</td><td>${esc(who)}</td><td class="muted">${esc(p.when || "")}</td>
+      <td class="rv-act"><a title="Edit" onclick="ppEdit('${esc(n)}')">${EDIT_ICON}</a><a class="del" title="Delete" onclick="ppRemove('${esc(n)}')">${DEL_ICON}</a></td></tr>`;
+  }).join("");
+  const bad = (S.principle_problems || []).filter(p => !specs[p.name]).map(p => `<tr><td><span class="rv-err">⚠</span> <b>${esc(p.name)}</b></td>
+      <td colspan="3" class="muted"><span class="rv-file">${esc(p.file)}</span> <span class="rv-errtext">${esc(p.error)}</span></td><td></td></tr>`).join("");
+  const none = !rows && !bad ? `<div class="muted" style="margin-bottom:8px">No principles yet. Run /sdlc:init to add the starter set, or add your own.</div>` : "";
+  el.innerHTML = `${none}${rows || bad ? `<table><tr><th>Name</th><th>Summary</th><th>Applies to</th><th>When</th><th></th></tr>${rows}${bad}</table>` : ""}`;
+}
+let PP = null;
+function ppEdit(name) {
+  const p = name ? S.effective.global.principle.list[name] : {};
+  PP = {name};
+  const row = (label, html, help) => `<div class="field" style="grid-template-columns:110px 1fr"><label>${label}</label><div>${html}${help ? `<div class="help">${help}</div>` : ""}</div></div>`;
+  const roles = p.applies_to && p.applies_to.length ? p.applies_to : [];
+  document.getElementById("drawer-body").innerHTML = `<h2 style="margin-top:0">${name ? "Edit principle: " + esc(name) : "Add principle"}</h2>
+    ${name ? "" : row("Name", `<input id="pp-name" placeholder="e.g. api-conventions">`, "Letters, digits, - and _. Becomes .claude/principles/&lt;name&gt;.md")}
+    ${row("Summary", `<input id="pp-summary" value="${esc(p.summary || "")}" placeholder="One line agents see before opening the file">`)}
+    ${row("Applies to", S.schema.roles.map(r => `<label style="display:inline-block;margin-right:12px"><input type="checkbox" class="pp-role" value="${r}" ${roles.includes(r) ? "checked" : ""} style="width:auto"> ${r}</label>`).join(""), "None ticked means all agents")}
+    ${row("When", `<textarea id="pp-when" rows="2" placeholder="always">${esc(p.when || "")}</textarea>`, "Optional: touches-ui, risk>=medium, paths:[globs], joined with 'or'. Judged once the spec exists")}
+    ${row("Principle", `<textarea id="pp-body" rows="16" spellcheck="false" style="font-family:ui-monospace,Menlo,monospace;font-size:12px">${esc((p.body || "").replace(/<!--[\s\S]*?-->/g, "").trim())}</textarea>`, "What an agent should know to do this the way the repo does it. Markdown.")}
+    <div class="err" id="pp-err"></div>
+    <div class="actions"><button class="primary" onclick="ppSave()">Save</button> <button class="secondary" onclick="closeDrawer()">Cancel</button></div>`;
+  document.getElementById("drawer").classList.add("open");
+}
+async function ppSave() {
+  const $ = id => document.getElementById(id), err = m => { $("pp-err").textContent = m; };
+  const name = PP.name || $("pp-name").value.trim();
+  const front = {summary: $("pp-summary").value.trim(), applies_to: [...document.querySelectorAll(".pp-role:checked")].map(x => x.value),
+                 when: $("pp-when").value.trim().replace(/\s*\n\s*/g, " ")};
+  if (front.when && !validRule(front.when)) return err("When: not a valid rule");
+  try {
+    await api("/api/principle/save", {method: "POST", body: JSON.stringify({name, front, body: $("pp-body").value})});
+    closeDrawer(); await ppReload(); ppMsg("Saved " + name + ". The file has uncommitted changes: commit it when you're ready.");
+  } catch (e) { err(e.message); }
+}
+async function ppRemove(n) {
+  if (!confirm(`Remove principle "${n}" from the list? Its file stays on disk.`)) return;
+  try { await api("/api/principle/delete", {method: "POST", body: JSON.stringify({name: n})}); await ppReload(); ppMsg("Removed " + n); }
+  catch (e) { ppMsg(e.message, true); }
+}
+
+function subTab(id) {
+  curSub = id;
+  S.schema.tabs.forEach(t => { document.getElementById("sp-" + t.id).hidden = t.id !== id; document.getElementById("st-" + t.id).classList.toggle("on", t.id === id); });
+  history.replaceState(null, "", "#settings/" + id);
+}
 async function preview() {
   if (document.querySelector(".err:not(:empty)")) return status("Fix the errors first");
   if (!Object.keys(changes).length) return status("No changes");
@@ -514,7 +600,7 @@ function show(tab) {
   document.getElementById("tab-help").classList.toggle("on", tab === "help");
   document.getElementById("tab-board").classList.toggle("on", tab === "board");
   document.getElementById("tab-settings").classList.toggle("on", tab === "settings");
-  if (tab === "settings") loadSettings();
+  if (tab === "settings") { history.replaceState(null, "", "#settings/" + curSub); loadSettings(); }
   if (tab === "help") loadHelp();
 }
 document.getElementById("tab-board").onclick = () => show("board");
@@ -551,6 +637,8 @@ async function loadHelp() {
   const r = await fetch("/api/help", {headers: {"X-SDLC-Token": TOKEN}});
   el.innerHTML = md(await r.text());
 }
+const sm = location.hash.match(/^#settings(?:\/(\w+))?$/);
+if (sm) { if (sm[1]) curSub = sm[1]; show("settings"); }
 loadBoard().then(() => { const m = location.hash.match(/^#job-(\w+)$/); if (m) openJob(m[1]); })
   .catch(e => document.getElementById("board").textContent = e.message);
 setInterval(() => { if (!document.getElementById("board-view").hidden) loadBoard().catch(() => {}); }, 4000);

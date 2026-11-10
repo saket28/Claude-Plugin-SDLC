@@ -30,11 +30,11 @@ Status: **v0.1, in development.** See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the
 
 ## Adding a reviewer
 
-Each reviewer is a markdown file in `.claude/reviewers/`: its frontmatter holds its settings (`at`, `when`, `condition`, `blocking`, `model`, and `agent:` or `run:` for those types) and its body is the instructions. `SDLC.md` just lists the paths: `reviewers: [.claude/reviewers/code.md, .claude/reviewers/security.md]`. `/sdlc:init` creates `code.md` and `security.md` (Claude Code's built-in `/code-review` and `/security-review`, both using `REVIEW.md`). Add or edit reviewers in the dashboard: `/sdlc:dashboard` → Settings → Reviewers → **+ Add reviewer**; the file is created from a template with the right sections. Details and examples: `/sdlc:help reviewers` or [reference/help.md](reference/help.md).
+Each reviewer is a markdown file in `.claude/reviewers/`: its frontmatter holds its settings (`at`, `when`, `condition`, `blocking`, `model`, and `agent:` or `run:` for those types) and its body is the instructions. `SDLC.md` just lists the paths: `review.reviewer.list: [.claude/reviewers/code.md, .claude/reviewers/security.md]`. `/sdlc:init` creates `code.md` and `security.md` (Claude Code's built-in `/code-review` and `/security-review`, both using `REVIEW.md`). Add or edit reviewers in the dashboard: `/sdlc:dashboard` → Settings → Review → **+ Add reviewer**; the file is created from a template with the right sections. Details and examples: `/sdlc:help reviewers` or [reference/help.md](reference/help.md).
 
 ## Configuration
 
-Everything repo-specific lives in `SDLC.md`: commands, gates, budgets, extra reviewers and when they run, integrations, pipeline rules, and the Answers and Learnings the retro maintains. `init` writes only what differs from the defaults. A repo can add reviewers of three kinds: an instructions file, a Claude Code project subagent, or a shell command.
+Principles (how the repo does things: architecture, design system, personas, security, testing) live in `.claude/principles/`, which `/sdlc:init` seeds with empty starters; every agent is pointed at the ones that apply to its role. Everything repo-specific lives in `SDLC.md`, grouped as `global` plus one section per stage (`spec`, `implement`, `test`, `review`, `release`): commands, gates, budgets, critical-thinking levels, extra reviewers and when they run, integrations, pipeline rules, and the Answers and Learnings the retro maintains. `init` writes only what differs from the defaults. A repo can add reviewers of three kinds: an instructions file, a Claude Code project subagent, or a shell command.
 
 ## Requirements
 

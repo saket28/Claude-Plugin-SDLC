@@ -20,7 +20,7 @@ def call(fn, inp):
 
 class HooksTest(unittest.TestCase):
     def setUp(self):
-        self.repo = make_repo("---\nprotected_paths: [\"secrets/**\"]\n---\n")
+        self.repo = make_repo("---\nglobal:\n  guardrail:\n    protected_paths: [\"secrets/**\"]\n---\n")
         self.addCleanup(shutil.rmtree, self.repo.parent, ignore_errors=True)
         self.cfg = config.load(self.repo)
         self.job = Store(self.cfg).create_job("hello")["id"]

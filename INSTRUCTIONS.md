@@ -46,6 +46,7 @@ evals/
 │   ├── SDLC.md                   # committed: settings, reviewers, adapters, pipeline rules, Answers, Learnings
 │   ├── REVIEW.md                 # committed: Claude Code review rules, used by the built-in code review
 │   ├── review-*.md               # committed, optional: instructions for repo-defined reviewers (§5)
+│   ├── .claude/principles/*.md   # committed: how the repo does things (architecture, design system ...), listed in global.principle.list (§2)
 │   ├── tools/sdlc/*              # committed, optional: the repo's command adapters (§6), any path
 │   └── .sdlc/                    # gitignored; /sdlc:init adds it to .gitignore
 │       ├── backlog.md            # items not started yet; an item leaves the backlog when its job starts
@@ -61,7 +62,7 @@ evals/
 │           ├── spec-review/r1/   # review-architecture.md …
 │           └── round-1/          # build.md  verify.md  test.md  review-code.md  review-security.md …
 │       └── release-v1.9.0/       # E3: one self-contained folder per release
-└── shop.sdlc-worktrees/          # worktree_dir: outside the repo, created on first job
+└── shop.sdlc-worktrees/          # global.repo.worktree_dir: outside the repo, created on first job
     └── job-123/                  # job 123's code checkout, on branch sdlc/job-123
 ```
 
@@ -78,21 +79,22 @@ YAML frontmatter holds the settings. The markdown body holds **pipeline** rules,
 
 ```markdown
 ---
-commands:
-  setup: npm ci
-  test: npm test
-  lint: npm run lint
-gates:
-  merge: { human_when: "paths:[src/auth/**, src/payments/**]" }
-reviewers:
-  security: { when: "risk>=medium or paths:[src/auth/**]" }
-  architecture:
-    at: spec
-    instructions: review-architecture.md
-    condition: "Adds a service or data store, or changes a public API contract"
-  a11y: { instructions: .claude/reviewers/a11y.md, when: touches-ui }
-  licenses: { run: "npx license-checker --failOn GPL", at: merge, when: "paths:[package.json]" }
-budgets: { per_job: 1500000 }
+global:
+  budget: { per_job: 1500000 }
+  command: { setup: npm ci, test: npm test, lint: npm run lint }
+review:
+  agent: { critical_thinking: 3 }
+  reviewer:
+    list:
+      security: { when: "risk>=medium or paths:[src/auth/**]" }
+      architecture:
+        at: spec
+        instructions: review-architecture.md
+        condition: "Adds a service or data store, or changes a public API contract"
+      a11y: { instructions: .claude/reviewers/a11y.md, when: touches-ui }
+      licenses: { run: "npx license-checker --failOn GPL", at: merge, when: "paths:[package.json]" }
+release:
+  gate: { mode: human }
 ---
 
 ## Pipeline rules
@@ -108,28 +110,49 @@ budgets: { per_job: 1500000 }
 
 The frontmatter uses a restricted YAML subset (scalars, lists, maps, inline `{}`, `#` comments). It is defined by `templates/sdlc.schema.json`, which is the single reference for every setting's type, default and help text:
 
+Every setting is named `<tab>.<section>.<setting>`. The tab is `global` or one of the five stages (`spec`, `implement`, `test`, `review`, `release`); the section groups related settings; the setting is the last part. In `SDLC.md` that is three levels of nesting. The dashboard's Settings page has a tab per first part, a block per second part, and shows each setting by its last part only. A key that doesn't fit is an error, not ignored. The stages configure the agents `spec-writer`, `builder`, `tester` and `reviewer`, and the merge step; at run time they are the stages `spec`, `build`, `verify`, `review` and `merge`.
+
 | Setting | Default | Meaning |
 |---|---|---|
-| `work_dir` | `.sdlc` | Local state folder, always gitignored |
-| `worktree_dir` | `../<repo>.sdlc-worktrees` | Where job code checkouts go: a sibling of the repo, not inside it |
-| `base_branch` / `branch_prefix` | `main` / `sdlc/` | Branches (`sdlc/job-123`) |
-| `commands.setup/test/lint/build` | detected by init | Commands that `sdlc.py verify` runs |
-| `test_paths` | detected by init (for example `tests/**`, `**/*.test.ts`) | Where the tester may write |
-| `board` | `{ adapter: files }` | Where jobs live: `files`, `github`, or a repo adapter, with optional `ops` (§6) and `stage_map` (E2) |
-| `host` | `github` with a GitHub remote and `gh` available, otherwise `local` | Where code lands: `local`, `github`, or a repo adapter, with optional `ops` (§6) |
-| `gates.spec` | `auto` | `auto`, `human`, or `{ human_when: <rule> }`. Becomes `human` whenever the spec has open questions |
-| `gates.merge` | `human` | Same values. With a host adapter that has PRs, "human" means the PR's own approval |
-| `max_rounds` | `3` | Total rounds per job, the first build included (minimum 1); then needs-human (§4) |
-| `merge_strategy` | `squash` | How a job lands on `base_branch`: `squash`, `merge` or `rebase`. The branch is rebased onto base and re-verified first (local); on GitHub it maps to `gh pr merge --squash/--merge/--rebase` |
-| `models.<agent>` | see §4 | Model per agent |
-| `reviewers.<name>` | `code` and `security` (§5) | Built-in and repo-defined reviewers |
-| `budgets.per_job/per_month/per_stage` | 2M / 50M / see schema | Token limits (§7) |
-| `budgets.on_exceed` | `escalate` | `warn` or `escalate` |
-| `learning` | `auto` | `auto` or `off` (§7) |
-| `protected_paths` | `SDLC.md`, `REVIEW.md`, `review-*.md`, `CLAUDE.md`, `.github/workflows/**`, `.claude/reviewers/**`, `.claude/agents/**` | Agents never write these |
-| `blocked_commands` | force-push, `reset --hard`, push to base | Bash commands agents may not run |
+| `global.pipeline.max_rounds` | `3` | How many rounds a job gets before a person decides. A round is one pass of build, verify and review: the builder changes the code, then the tests and reviewers respond (§4) |
+| `global.pipeline.critical_thinking` | `1` | A choice of `0` to `5`: how hard agents question their instructions before acting. `0` Off (nothing added to briefs), `1` Flag (only clear contradictions), `2` Check (instructions against spec, code and rules), `3` Challenge (push back on weak points, with evidence), `4` Sceptical (assume mistakes until checked), `5` Adversarial (challenge the task itself). Each stage may set its own (`<stage>.agent.critical_thinking`, empty = this); a reviewer may too. Added to each brief as a "Working stance" block. Higher levels cost more tokens and rounds |
+| `global.pipeline.judge_model` | `haiku` | Cheap model for judging reviewer conditions and writing retro learnings |
+| `global.pipeline.agent_attempts` | `2` | Times an agent is run for the same step when it doesn't write its report, before the job fails |
+| `global.learning.mode` / `on` | `auto` / `[done, failed]` | `auto` or `off`; and the job outcomes that trigger the retro (§7) |
+| `global.repo.base_branch` / `branch_prefix` | `main` / `sdlc/` | Branches (`sdlc/job-123`) |
+| `global.repo.branch_name` | `{prefix}job-{id}` | Job branch name; placeholders `{prefix}`, `{id}`, `{slug}` (the title as a short slug). A ticket id from a remote board is used as the name when this is left at its default |
+| `global.repo.work_dir` | `.sdlc` | Local state folder, always gitignored |
+| `global.repo.worktree_dir` | `../<repo>.sdlc-worktrees` | Where job code checkouts go: a sibling of the repo, not inside it |
+| `global.command.setup/build/lint/test` | detected by init | All of the repo's commands, shared by the builder, verify and the tester. `setup` runs once when the job's worktree is created; `sdlc.py verify` runs the others in `test.verify.order` |
+| `global.command.timeout` | `1800` | Seconds a command may run before it is stopped |
+| `global.board` | `{ adapter: files }` | Where jobs live: `files`, `github`, or a repo adapter, with optional `ops` (§6) and `stage_map` (E2) |
+| `global.budget.per_job/per_month/orchestrate` | 2M / 50M / 200k | Token limits (§7) |
+| `global.budget.on_exceed` / `warn_at` | `escalate` / `0.8` | `warn` or `escalate`; the fraction that triggers a warning |
+| `global.dashboard.stall_after` | `10` | Minutes without activity before a running job is marked as possibly stalled |
+| `global.wait.interval` / `max_hours` | `60` / `12` | Seconds between checks, and hours to wait, for CI or an approval |
+| `global.guardrail.protected_paths` | `SDLC.md`, `REVIEW.md`, `review-*.md`, `CLAUDE.md`, `.github/workflows/**`, `.claude/reviewers/**`, `.claude/agents/**`, `.claude/principles/**` | Agents never write these. A repo's entries are added to this list |
+| `global.guardrail.blocked_commands` | force-push, `reset --hard`, push to base | Bash commands agents may not run. A repo's entries are added to this list |
+| `global.principle.list` | `[]` (`init` lists the five starters) | Paths of principle files in `.claude/principles/`. Agent instructions say why, the task says what, principles say how. See "Principles" below |
+| `<stage>.agent.model` / `critical_thinking` | `opus`/`opus`/`sonnet`/`sonnet` for spec, implement, test, review; global | The stage's agent model, and its own critical-thinking level (empty = `global.pipeline.critical_thinking`) |
+| `<stage>.budget.tokens` | spec 150k, implement 1M, test 300k, review 400k, release 100k | The stage's token cap (empty = `per_job`) |
+| `spec.gate.mode` | `none` | `none` (the build starts when the spec is ready) or `human` (a person approves the spec first) |
+| `spec.format.sections` | `[]` | Extra sections every spec must contain; the spec-writer is told to add them |
+| `test.scope.paths` | detected by init (for example `tests/**`, `**/*.test.ts`) | Where the tester may write |
+| `test.verify.order` / `stop_on_failure` | `[lint, build, test]` / `true` | Which commands `sdlc.py verify` runs and in what order (leave one out to skip it), and whether it stops at the first failure |
+| `review.severity.nits_block` | `false` | Findings marked Nit also send the job back to the builder (normally only Important ones do) |
+| `review.reviewer.list` | `code` and `security` (§5) | Built-in and repo-defined reviewers, each with its own optional `critical_thinking` and `model` |
+| `release.gate.mode` | `human` | `none` (merge as soon as everything passes) or `human` (a person approves; with a host adapter that has PRs, the PR's own approval) |
+| `release.merge.strategy` | `squash` | How a job lands on `global.repo.base_branch`: `squash`, `merge` or `rebase`. The branch is rebased onto base and re-verified first (local); on GitHub it maps to `gh pr merge --squash/--merge/--rebase` |
+| `release.merge.message` | `{title} (job-{id})` | Commit message for squash and merge commits; placeholders `{title}`, `{id}`, `{branch}`. Ignored for `rebase`, which keeps every commit |
+| `release.merge.delete_branch` | `true` | Delete the job branch after it is merged |
+| `release.pr.draft` / `labels` / `reviewers` | `false` / `[]` / `[]` | Pull request options (GitHub): open as draft, labels to add (they must exist), reviewers to request |
+| `release.ci.required` | `true` | Wait for CI to pass before merging, and send the job back if it fails. Off ignores CI |
+| `release.cleanup.worktree` | `true` | Remove the job's checkout after it is merged |
+| `release.host` | `github` with a GitHub remote and `gh` available, otherwise `local` | Where code lands: `local`, `github`, or a repo adapter, with optional `ops` (§6) |
 
-**Rules (`when`, `human_when`)** take one of these forms, combined with `or`:
+**Principles.** A principle is a markdown file in `.claude/principles/<name>.md`: the frontmatter holds `summary`, `applies_to` (any of `spec-writer`, `builder`, `tester`, `reviewer`; empty means all) and `when` (a rule, below), and the body is the principle. `/sdlc:init` creates five starter files (also in a repo that already has an `SDLC.md`, when it lists no principles yet) (`architecture`, `design-system`, `personas`, `security`, `testing`) as comment-only placeholders and lists them. A file with no text outside HTML comments is never shown to agents, so an unfilled starter costs nothing. Each brief gets a "Principles for this repo" block listing the applicable files, by absolute path in the main checkout with their summaries; the agent reads the ones relevant to its task and names the principle behind any objection. `when` is judged once the spec exists, so the spec-writer is pointed at every principle that matches its role. Only a person edits principles: `.claude/principles/**` is protected, and the retro may suggest a change as a learning but never writes one. The Global tab of Settings lists them with add, edit and delete (delete removes the entry from the list; the file stays on disk).
+
+**Rules (`when`)** take one of these forms, combined with `or`:
 
 | Form | Meaning |
 |---|---|
@@ -147,7 +170,7 @@ The frontmatter uses a restricted YAML subset (scalars, lists, maps, inline `{}`
 | `/sdlc:start [id \| text]` | With no argument, starts the next backlog item. With an ID, starts the job or continues it from its first incomplete stage, which also retries a `failed` job. |
 | `/sdlc:status [id] [--check]` | Board summary, or one job's detail including running agents and stalls. `--check` runs the health check: config and adapters valid, commands run, hooks active, plus stalled jobs, and worktrees or branches whose job folder is gone (with an offer to clean them up). |
 | `/sdlc:approve <id> <gate> [value]` | Passes a job's gate: `spec`, `merge` (local host) or `budget +500k`. At needs-human, it accepts the stopped step and moves on (§4). |
-| `/sdlc:rework <id> "<feedback>"` | Sends a job back to the builder with feedback, as a new round that doesn't count toward `max_rounds`. |
+| `/sdlc:rework <id> "<feedback>"` | Sends a job back to the builder with feedback, as a new round that doesn't count toward `global.pipeline.max_rounds`. |
 | `/sdlc:cancel <id>` | Stops a job and removes its worktree, keeping its folder and branch. |
 | `/sdlc:dashboard` | Starts the local dashboard and prints its URL. |
 
@@ -178,7 +201,7 @@ To keep token use low, everything that doesn't need judgment is done by `sdlc.py
 
 `reference/pipeline.md` only describes this loop. Skills inject live state with `!`-commands (for example `` !`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py status` ``), so reading state doesn't cost a tool call. **Waiting costs nothing.** Every wait is a background script that exits only when there's something to do, and the exit notifies the session: `sdlc.py wait` for CI and gate approvals (including approvals given on a ticket), and `sdlc.py check --watch` for monitoring (E3). Nothing polls in a loop that costs tokens, and nothing re-invokes Claude on a timer.
 
-**Briefs.** `sdlc.py` writes each agent's full brief to `job-<n>/briefs/<stage>-r<round>.md`, in cache-friendly order: the pipeline rules and Answers from `SDLC.md`, then the Learnings tagged for the agent's role, then the spec, then what changed this round. The settings frontmatter is left out, because agents don't need it. The prompt the orchestrator sends is a single line: `SDLC-JOB: <n> STAGE: <stage> ROUND: <r>. Read <brief path> first.` The orchestrator never copies files into prompts. Agents never read `SDLC.md` from their worktree, because that copy may be out of date.
+**Briefs.** `sdlc.py` writes each agent's full brief to `job-<n>/briefs/<stage>-r<round>.md`, in cache-friendly order: the pipeline rules and Answers from `SDLC.md`, then the list of principles that apply to the agent's role, then the Learnings tagged for the role, then the spec, then what changed this round. The settings frontmatter is left out, because agents don't need it. The prompt the orchestrator sends is a single line: `SDLC-JOB: <n> STAGE: <stage> ROUND: <r>. Read <brief path> first.` The orchestrator never copies files into prompts. Agents never read `SDLC.md` from their worktree, because that copy may be out of date.
 
 ### Flow
 
@@ -203,7 +226,7 @@ flowchart LR
     H -->|"rework"| B
 ```
 
-There are seven stages (`queued`, `spec`, `build`, `verify`, `review`, `merge`, `done`) plus three exception states. `needs-human` means a decision is needed. `failed` means something broke (an agent crashed or hit `maxTurns` twice) and the job needs a retry with `start <id>`. `cancelled` is final. A **retro** (§7) runs once, when a job reaches done or cancelled, or when it first fails.
+There are seven stages (`queued`, `spec`, `build`, `verify`, `review`, `merge`, `done`). **Human required** is not a stage: it is a flag on a job that stays in the stage where it stopped. A job is human-required when it hit a decision (`needs-human`: budget, max rounds, a spec that won't settle, protected paths, a stalemate, an adapter error) or when something broke (`failed`: an agent crashed or hit `maxTurns` twice, retried with `start <id>`). Errors are not a separate state either. `cancelled` is final. A **retro** (§7) runs once, when a job reaches done or cancelled, or when it first fails.
 
 | Stage | Who | Writes | Done when |
 |---|---|---|---|
@@ -242,8 +265,8 @@ The merge stage uses the `host` adapter's operations (§6):
 
 1. **Merge-step reviewers** run on the final diff, for example license or changelog checks. A CHANGES verdict starts a new build round.
 2. **CI.** `open_pr` (body = spec plus review summary), then `pr_status` until CI finishes. A host without PRs or CI (such as `local`) skips this step.
-3. **Rule check.** No blocking Important findings are open, verify and CI are green, and the diff touches no protected paths. This diff check is the real enforcement of `protected_paths`, because the write hook can't see writes made through Bash (§8). If any of these fails, the job goes to needs-human with the reason in `decision.md`.
-4. **Merge gate.** For a host adapter with PRs, the gate is the PR's own approval (`pr_status.approved`). With `auto`, an approval isn't required. Then `update_branch` if the branch is behind, wait for CI again, and `merge`. If the host refuses the merge (for example because branch protection requires more approvals), the job waits at the gate with the host's reason. There's no rebase and no force-push. For the `local` host, wait for `/sdlc:approve <id> merge` if the gate is human, then rebase in the worktree, re-run `sdlc.py verify`, and fast-forward `base_branch`. The fast-forward needs the main checkout to be on `base_branch` with no uncommitted changes. Otherwise the job waits with `blocked_reason: checkout-dirty` and never touches the user's work.
+3. **Rule check.** No blocking Important findings are open, verify and CI are green, and the diff touches no protected paths. This diff check is the real enforcement of `global.guardrail.protected_paths`, because the write hook can't see writes made through Bash (§8). If any of these fails, the job goes to needs-human with the reason in `decision.md`.
+4. **Merge gate.** For a host adapter with PRs, the gate is the PR's own approval (`pr_status.approved`). With `release.gate.mode: none`, an approval isn't required. Then `update_branch` if the branch is behind, wait for CI again, and `merge`. If the host refuses the merge (for example because branch protection requires more approvals), the job waits at the gate with the host's reason. There's no rebase and no force-push. For the `local` host, wait for `/sdlc:approve <id> merge` if the gate is human, then rebase in the worktree, re-run `sdlc.py verify`, and fast-forward `base_branch`. The fast-forward needs the main checkout to be on `base_branch` with no uncommitted changes. Otherwise the job waits with `blocked_reason: checkout-dirty` and never touches the user's work.
 
 ### Continuing from needs-human (`approve`)
 
@@ -252,15 +275,16 @@ The merge stage uses the `host` adapter's operations (§6):
 | budget | re-runs the interrupted stage with the raised budget |
 | max rounds at the spec step | accepts the spec as it is and goes on to build |
 | max rounds at build, verify, review or merge, or a failed rule check | goes on to the merge gate, skipping the rule check |
+| a stalemate (a checker kept a finding the builder disputed) | goes on to the merge gate, siding with the builder. `rework "ruling"` sides with the checker |
 | an adapter error | retries the failed operation |
 
 Every override is recorded in `decision.md` (`override: true`, with who approved and why).
 
 ### Rules
 
-- **Rounds.** A round is one run of the builder (`round-1`, `round-2` …). A CHANGES or FAIL from verify, review or merge starts the next round. Separately, a blocking CHANGES from a spec reviewer sends the spec back to the spec-writer for a spec revision. `max_rounds` is the total number of rounds, the first build included (default 3: the first build plus up to 2 automatic reworks), and the same number of spec drafts; then the job goes to needs-human. Rounds started by `/sdlc:rework` don't count.
+- **Rounds.** A round is one run of the builder (`round-1`, `round-2` …). A CHANGES or FAIL from verify, review or merge starts the next round. Separately, a blocking CHANGES from a spec reviewer sends the spec back to the spec-writer for a spec revision. `global.pipeline.max_rounds` is the total number of rounds, the first build included (default 3: the first build plus up to 2 automatic reworks), and the same number of spec drafts; then the job goes to needs-human. Rounds started by `/sdlc:rework` don't count.
 - **WAIT FOR ALL.** A step's reviews finish only when every selected reviewer's file exists. In later rounds, only reviewers who returned CHANGES run again, plus `code` if it is enabled.
-- **Disputes.** The builder can answer a finding or a test as **disputed (reason)**. In the next round the reviewer or tester sees the dispute and either withdraws the finding or keeps it. A finding still disputed after that sends the job to needs-human.
+- **Disputes and stalemates.** Agents are asked to think critically (`critical_thinking`), so they push back instead of complying silently. The builder answers a finding or a test as **disputed (reason)**. In the next round the reviewer or tester weighs the reason and either withdraws the finding or keeps it, and says how many it kept in `upheld:` in its report. If anything is kept, neither side will move: that is a **stalemate**, and the job is human-required (reason `stalemate`) at once, without spending more rounds. The person decides: `approve override` sides with the builder, `rework "ruling"` sides with the checker. Stalemates are detected for the tester and for reviewers that run as agents (instructions and agent reviewers). The built-in `/code-review` and `/security-review` run headless and have no dispute exchange.
 - **Adapter errors.** A failed adapter operation is retried once. If it fails again, the job goes to needs-human with the tool's error message.
 - **Fresh agents.** Every round starts a fresh agent from the job's files. There's no session to resume, which makes recovery trivial.
 - **Before returning a `spawn` action**, `sdlc.py next` records the stage, round and orchestrator `session_id` in the job folder. Hooks read this to attribute tokens and enforce write scope.
@@ -274,7 +298,7 @@ Every override is recorded in `decision.md` (`override: true`, with who approved
 |---|---|---|---|
 | `spec-writer` | opus | Read, Grep, Glob, Write | Writes `spec.md`: problem, scope and non-goals, acceptance criteria `AC-1…`, interfaces, the paths it expects to touch, and open questions. Proposes a split if the feature is too big. On a spec review, revises the spec. |
 | `builder` | opus | Read, Grep, Glob, Edit, Write, Bash | Writes code and commits in the worktree, then `build.md`: changes, mapping to acceptance criteria, deviations. On rework, answers each Important finding as **fixed** or **disputed (reason)**. May also dispute a tester's test. |
-| `tester` | sonnet | Read, Grep, Glob, Edit, Write, Bash | Works independently of the builder. Writes acceptance tests for each criterion (only under `test_paths`), **commits them**, runs the suite, and writes `test.md` with a coverage table by criterion. |
+| `tester` | sonnet | Read, Grep, Glob, Edit, Write, Bash | Works independently of the builder. Writes acceptance tests for each criterion (only under `test.scope.paths`), **commits them**, runs the suite, and writes `test.md` with a coverage table by criterion. |
 | `reviewer` | sonnet (or the reviewer's `model`) | Read, Grep, Glob, Write | Runs a repo-defined `instructions` reviewer. Reads the instructions file plus the spec, and the diff at the review and merge steps. Writes `review-<name>.md`. |
 
 Every agent may end its file with `## Learning candidates` and `## Questions`, and cites the learnings it relied on (`applied: L-9c1e`).
@@ -363,19 +387,21 @@ The core calls two adapters through fixed operations. **The plugin ships three b
   `adapter: ./tools/sdlc/gitlab.py` is shorthand for setting every operation to `./tools/sdlc/gitlab.py <operation>`.
 
 ```yaml
-board:                                  # Jira: reads through REST, writes through the Atlassian MCP server
-  adapter: custom
-  stage_map: { spec: Refinement, build: In Progress, review: In Review, done: Done }
-  ops:
-    list_queue:     "./tools/sdlc/jira.py queue"
-    create:         instructions
-    move:           instructions
-    update_status:  instructions
-    read_approvals: "./tools/sdlc/jira.py approvals {ticket}"
-host:
-  adapter: github                       # built-in, one operation overridden
-  ops:
-    merge: "gh pr merge {branch} --rebase --delete-branch"
+global:
+  board:                                # Jira: reads through REST, writes through the Atlassian MCP server
+    adapter: custom
+    stage_map: { spec: Refinement, build: In Progress, review: In Review, done: Done }
+    ops:
+      list_queue:     "./tools/sdlc/jira.py queue"
+      create:         instructions
+      move:           instructions
+      update_status:  instructions
+      read_approvals: "./tools/sdlc/jira.py approvals {ticket}"
+release:
+  host:
+    adapter: github                     # built-in, one operation overridden
+    ops:
+      merge: "gh pr merge {branch} --rebase --delete-branch"
 ```
 
 ```markdown
@@ -450,8 +476,8 @@ Hooks find the active job by matching their `session_id` against the `job.json` 
 
 | Hook | Does |
 |---|---|
-| PreToolUse `Write\|Edit\|NotebookEdit` | Each agent writes only its own area. The builder writes its worktree minus `protected_paths`, plus `build.md`. The tester writes `test_paths` plus `test.md`. Any reviewer, generic or a repo's project subagent, writes only its review file. Blocked writes are logged. The hook fails closed (`onFailure: block`). |
-| PreToolUse `Bash` | Denies `blocked_commands` to pipeline agents, along with deploy and rollback commands (E3). |
+| PreToolUse `Write\|Edit\|NotebookEdit` | Each agent writes only its own area. The builder writes its worktree minus `global.guardrail.protected_paths`, plus `build.md`. The tester writes `test.scope.paths` plus `test.md`. Any reviewer, generic or a repo's project subagent, writes only its review file. Blocked writes are logged. The hook fails closed (`onFailure: block`). |
+| PreToolUse `Bash` | Denies `global.guardrail.blocked_commands` to pipeline agents, along with deploy and rollback commands (E3). |
 | SubagentStop | Records usage (§7). If the agent didn't write its file, sends it back with "write `<file>`". |
 | Stop | Records the orchestrator's usage. |
 
@@ -466,9 +492,9 @@ Hooks find the active job by matching their `session_id` against the `job.json` 
 └─────────┴──────┴───────┴────────┴────────┴───────┴──────┘
 ```
 
-- **Board.** Jobs move left to right across the stage columns. A Needs human lane sits after Review and holds every job waiting on a person. A failed job stays in its stage column with a Failed badge.
+- **Board.** Jobs move left to right across the stage columns. There is no Needs human or Failed column: a job that needs a person stays in its stage and shows the alert icon (in red, with the reason on hover).
 - **Card.** Number and title, round, reviewer chips (built-in and repo-defined) that fill in as verdicts arrive, a token bar against the budget, a gate badge, and a stall marker. The server works out stalls from transcript modification times.
-- **Alerts.** A job raises an alert when it needs a human, fails, errors, reaches the budget warning or finishes. Alerts are stored in `job-<n>/alerts.json`, shown at the top of the card detail (and as a 🔔 count on the card), and cleared by the human, one at a time or all at once.
+- **Alerts.** A job raises an alert when a human is required (a decision, a failure or an error: one kind, `human`), reaches the budget warning or finishes. Alerts are stored in `job-<n>/alerts.json`, shown at the top of the card detail (and as a 🔔 count on the card), and cleared by the human, one at a time or all at once.
 - **Card detail.** A step-by-step timeline. Each stage shows its status, agent and model, duration, tokens, the reviewers selected and why, verdicts, and links to open its files rendered as markdown. Below the timeline: round history, errors and guardrail blocks, and learnings applied.
 - **Header.** Month tokens against budget, and jobs in progress.
 - **Trends.** The §7 metrics over the last 30 jobs.
@@ -501,11 +527,11 @@ Hooks find the active job by matching their `session_id` against the `job.json` 
 
 A **Settings** tab in the dashboard for editing `SDLC.md`, available with every adapter.
 
-- The form is generated from `sdlc.schema.json`. It shows every setting with its default and help text, and each value is marked as default or overridden. Enums are dropdowns, budgets show current usage next to them, and lists can have rows added and removed. Lists include reviewers (with their kind, `at`, `when`, `condition` and `blocking`), paths and checks.
+- The form is generated from `sdlc.schema.json`: one tab per section (Global, Spec, Implement, Test, Review, Release) plus Learnings, each setting shown without its section prefix, and the tab address (`#settings/review`) can be linked to. It shows every setting with its default and help text, and each value is marked as default or overridden. Enums are dropdowns, budgets show current usage next to them, and lists can have rows added and removed. Lists include reviewers (with their kind, `at`, `when`, `condition` and `blocking`), paths and checks.
 - `when` rules are checked as you type. Instruction files and project subagents a reviewer refers to must exist.
-- Changes are also checked against cross-field rules (for example, no `per_stage` budget may exceed `per_job`). Saving shows a diff first. `sdlc.py config set` writes only the changed keys, keeps comments, and writes only overrides.
+- Changes are also checked against cross-field rules (for example, no `<stage>.budget.tokens` may exceed `global.budget.per_job`). Saving shows a diff first. `sdlc.py config set` writes only the changed keys, keeps comments, and writes only overrides.
 - Each save carries the file's hash. If `SDLC.md` changed on disk in the meantime, the save is rejected and the form reloads.
-- Learnings and Answers, from `SDLC.md`, are listed in Settings.
+- A done job has a **Delete this job** button in its card detail. It removes the job's folder (timeline, reports, alerts). The month's token ledger, the merged code and its branch stay. Only done jobs can be deleted. Reviewers are listed in the Review tab. Learnings and Answers, from `SDLC.md`, have their own Learnings tab (edit or delete each entry).
 - Secrets show only their `userConfig` name and whether they're set. Commands are never run from the UI.
 - Saving changes only the working tree. A banner shows "SDLC.md has uncommitted changes". Each save logs a `config_change` event.
 - Writes must be `POST` requests with the session token and a matching `Origin`. The server writes only `SDLC.md` and reviewer files.
@@ -515,10 +541,11 @@ A **Settings** tab in the dashboard for editing `SDLC.md`, available with every 
 The `files` board only works for one person. A team points the board at its ticketing system: the built-in `github` adapter (Issues, plus an optional Project), or its own adapter for Jira and others (§6). The plugin provides the team mechanics described here (claims, status comments, approvals on the ticket) on top of whatever adapter the repo supplies.
 
 ```yaml
-board:
-  adapter: github                                # files | github | custom (with ops) | ./path/to/command
-  github: { project: 12 }                        # optional GitHub Project; labels are used without one
-  stage_map: { spec: Refinement, build: In Progress, verify: In Progress, review: In Review, merge: In Review, needs-human: Blocked, done: Done }
+global:
+  board:
+    adapter: github                              # files | github | custom (with ops) | ./path/to/command
+    github: { project: 12 }                      # optional GitHub Project; labels are used without one
+    stage_map: { spec: Refinement, build: In Progress, verify: In Progress, review: In Review, merge: In Review, needs-human: Blocked, done: Done }
 ```
 
 - **Setup.** GitHub works out of the box through `gh`. For Jira and other tools, the repo writes the adapter (§6), and `init` helps. `init` also discovers the board's columns or statuses to propose `stage_map`, and runs the contract test.
@@ -548,7 +575,7 @@ monitor:                                             # optional
     - { name: errors, run: "./scripts/error_rate_below.sh 1%" }
   on_breach: rollback                                # notify | rollback
 rollback: { method: revert }                         # revert | command (+ command: …)
-gates: { release: human, rollback: human }
+release: { gate: { mode: human }, rollback: { mode: human } }
 ```
 
 | Command | What it does |
@@ -598,7 +625,7 @@ Every version must pass `claude plugin validate --strict` and the evals, which r
 - **Self-contained job.** Delete a done job's folder and an in-progress job's folder. The board, `status`, budgets, learnings and the next job still work. Job numbers aren't reused. `status --check` reports the orphaned worktree and branch.
 - **Repo reviewers.** An `instructions` reviewer at the spec step with a `condition`, an `agent` reviewer, and a `run` reviewer at the merge step each run only when selected, and each writes the standard format. A blocking CHANGES sends the job back to the right agent.
 - **Learning.** Job 1 hits a known problem. Job 2 must avoid it without asking the human again. Two retros running in parallel produce no ID collisions.
-- **Budget.** A tiny `per_stage` budget sends the job to needs-human. `approve budget` re-runs that stage, not the merge.
+- **Budget.** A tiny stage `budget.tokens` sends the job to needs-human. `approve budget` re-runs that stage, not the merge.
 - **Override.** A job that hits max rounds at review, then gets approved, merges with `override: true` in `decision.md`. A job that hits max spec revisions, then gets approved, goes on to build.
 - **Protected paths.** A builder that changes a protected file through Bash is caught by the merge rule check.
 - **Dirty checkout** (`local` host). A merge with uncommitted user changes waits and leaves those changes untouched.

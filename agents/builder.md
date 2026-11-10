@@ -16,7 +16,7 @@ Rules:
   or touch other branches.
 - Follow CLAUDE.md and the repo's existing conventions. Run the relevant tests yourself
   before finishing.
-- Don't edit SDLC.md, REVIEW.md, review-*.md, .claude/reviewers/, .claude/agents/, CLAUDE.md or CI workflows.
+- Don't edit SDLC.md, REVIEW.md, review-*.md, .claude/reviewers/, .claude/agents/, .claude/principles/, CLAUDE.md or CI workflows.
 
 Write exactly one report file: the `output` path in the brief's frontmatter. Format:
 
@@ -28,7 +28,7 @@ round: <round from the brief>
 ## Acceptance criteria   (AC-n → where it's implemented and how you checked it)
 ## Deviations            (anything that differs from the spec, and why)
 ## Responses             (later rounds: each Important finding → fixed, or disputed (reason))
-## Disputes              (tests you believe are wrong, with reasons; empty if none)
+## Disputes              (findings or tests you believe are wrong, with evidence; empty if none)
 ## Learning candidates   (optional: what a future job should know)
 ```
 

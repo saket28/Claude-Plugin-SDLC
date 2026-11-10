@@ -11,7 +11,7 @@ from pathlib import Path
 from . import yamlish
 
 KINDS = ("builtin", "agent", "run")
-FRONT_KEYS = ("builtin", "agent", "run", "at", "when", "condition", "blocking", "model", "effort", "timeout")
+FRONT_KEYS = ("builtin", "agent", "run", "at", "when", "condition", "blocking", "model", "critical_thinking", "effort", "timeout")
 # written in this order
 FOLDER = ".claude/reviewers"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -42,7 +42,7 @@ def read(root, rel):
 
 
 def load_list(root, paths):
-    """Reviewers named by SDLC.md's `reviewers:` list -> ({name: spec}, [warnings]).
+    """Reviewers named by SDLC.md's `review.reviewer.list` list -> ({name: spec}, [warnings]).
     A missing or unreadable file is a warning, not a crash, so the dashboard still opens."""
     out, warnings, problems = {}, [], []
 
@@ -130,13 +130,13 @@ def _sdlc_list(root):
     from . import configedit
     text = (Path(root) / "SDLC.md").read_text() if (Path(root) / "SDLC.md").exists() else "---\n---\n"
     raw, _ = yamlish.parse_frontmatter(text)
-    return text, raw.get("reviewers")
+    return text, ((raw.get("review") or {}).get("reviewer") or {}).get("list")
 
 
 def _write_list(root, paths):
     from . import configedit
     text, _ = _sdlc_list(root)
-    new = configedit.apply(text, {"reviewers": paths})
+    new = configedit.apply(text, {"review.reviewer.list": paths})
     configedit._validate_text(Path(root), new)
     p = Path(root) / "SDLC.md"
     tmp = p.with_suffix(".md.tmp")
@@ -151,7 +151,7 @@ def save(cfg, name, front, body="", agent_content=None):
     _, listed = _sdlc_list(root)
     if not isinstance(listed, list):
         raise ValueError("reviewers are still inline in SDLC.md; convert them to files first")
-    existing = (cfg["reviewers"].get(name) or {}).get("file")
+    existing = (cfg.reviewers.get(name) or {}).get("file")
     if not existing and not NAME_RE.match(name or ""):
         raise ValueError("name: letters, digits, - and _ only")
     rel = existing or path_for(name)
@@ -171,10 +171,12 @@ def save(cfg, name, front, body="", agent_content=None):
             raise ValueError("agent name: letters, digits, - and _ only")
         if agent_content is not None and not agent_content.strip():
             raise ValueError("the agent definition can't be empty")
-    if front.get("at", "review") not in config.STEPS:
-        raise ValueError(f"trigger must be one of {', '.join(config.STEPS)}")
-    if front.get("model") not in (None, "opus", "sonnet", "haiku", "fable", "inherit"):
-        raise ValueError("model must be opus, sonnet, haiku, fable or inherit")
+    from . import schema
+    for key in ("at", "model", "critical_thinking", "effort"):
+        if front.get(key) is not None:
+            bad = schema.check(key, schema.reviewer_field(key), front[key])
+            if bad:
+                raise ValueError(bad.replace(f"{key} must", f"{key} must", 1))
     if "when" in front:
         try:
             rules.parse(front["when"])
@@ -194,7 +196,7 @@ def save(cfg, name, front, body="", agent_content=None):
 def delete(cfg, name):
     """Stop using a reviewer: drop it from SDLC.md's list. Its file stays on disk."""
     _, listed = _sdlc_list(cfg.root)
-    rel = (cfg["reviewers"].get(name) or {}).get("file")
+    rel = (cfg.reviewers.get(name) or {}).get("file")
     if not isinstance(listed, list) or rel not in listed:
         raise ValueError(f"no file-backed reviewer named {name}")
     _write_list(cfg.root, [p for p in listed if p != rel])
@@ -209,7 +211,7 @@ def convert_legacy(cfg):
     if isinstance(listed, list):
         raise ValueError("reviewers are already files")
     created, kept, paths = [], [], []
-    for name, spec in cfg["reviewers"].items():
+    for name, spec in cfg.reviewers.items():
         rel = path_for(name)
         paths.append(rel)
         if (root / rel).exists() and not (spec.get("instructions") == rel):
