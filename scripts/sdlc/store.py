@@ -282,7 +282,9 @@ class Store:
             cur = p.read_text() if p.exists() else "# Backlog\n\n"
             if not cur.endswith("\n"):
                 cur += "\n"
-            meta = {"id": "b" + secrets.token_hex(3), "created": now(), "priority": priority}
+            # The card carries the number its job will get, so "5" means the same thing on the board,
+            # in /sdlc:start 5 and in the job's branch. (Numbers are never reused.)
+            meta = {"id": self.new_job_id(), "created": now(), "priority": priority}
             lines = self._backlog_render(text, description, meta)
             write_atomic(p, cur + "\n".join(lines) + "\n")
             return meta["id"]
@@ -314,12 +316,12 @@ class Store:
             write_atomic(p, "\n".join(lines) + "\n")
 
     def pop_backlog_item(self, text=None):
-        """Remove and return the first item (or the one whose title matches)."""
+        """Remove and return the first item, or the one whose id or title matches."""
         p = self.backlog_path()
         with locked(p):
             lines, items = self._backlog_parse()
             for it in items:
-                if text is None or it["title"] == text.strip():
+                if text is None or text.strip() in (it["title"], it["id"]):
                     del lines[it["start"]:it["end"]]
                     write_atomic(p, "\n".join(lines) + "\n")
                     return it

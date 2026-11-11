@@ -19,7 +19,7 @@ Status: **v0.1, in development.** See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the
 |---|---|
 | `/sdlc:init` | Set up the repo: `SDLC.md`, `REVIEW.md`, `.sdlc/` (gitignored), with `gh` set up if you use GitHub |
 | `/sdlc:intake <text>` | Add a feature to the backlog |
-| `/sdlc:start [id \| text]` | Start the next backlog item, a new feature, or continue a job |
+| `/sdlc:start [id \| text]` | Start the next backlog item, a backlog card by its number, a new feature, or continue a job |
 | `/sdlc:status [id] [--check]` | Jobs, stages, tokens, and anything waiting on you; `--check` runs a health check |
 | `/sdlc:approve <id> <gate>` | Pass a gate: `spec`, `merge`, `budget +500k`, `override`, `retry` |
 | `/sdlc:rework <id> "<feedback>"` | Send a job back to the builder with your feedback |

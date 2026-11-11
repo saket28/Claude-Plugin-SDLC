@@ -118,12 +118,17 @@ def cmd_start(a):
             return
         out({"job": job_id, "continuing": True})
         return
+    if re.fullmatch(r"(job-)?\d+|b?[0-9a-f]{6,7}", arg) and not any(arg == i["id"] or arg == i["title"] for i in st.backlog_items()):
+        return out({"error": f"no job or backlog item '{arg}'. Give a feature description to start a new job, "
+                             "or /sdlc:status to list jobs"})
     item = st.pop_backlog_item(arg or None)
-    text = arg or (item or {}).get("title")
+    text = (item or {}).get("title") if item else arg
     if not text:
         return out({"error": "the backlog is empty; give a feature description or /sdlc:intake one"})
     desc = (item or {}).get("description")
-    meta = st.create_job(text, source=f"{text}\n\n{desc}" if desc else None)
+    wanted = (item or {}).get("id", "")
+    job_id = wanted if wanted.isdigit() and not st.job_dir(wanted).exists() else None   # the number on the card
+    meta = st.create_job(text, source=f"{text}\n\n{desc}" if desc else None, job_id=job_id)
     out({"job": meta["id"], "created": True, "branch": meta["branch"]})
 
 

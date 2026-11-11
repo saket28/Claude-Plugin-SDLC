@@ -161,7 +161,7 @@ function meter(el, used, limit) {
 let BACKLOG = [];
 function blCard(x) {
   return `<div class="card bl ${esc(x.priority)}" onclick="openBacklog('${esc(x.id)}')">
-    <div class="id">${esc(x.id)}${x.priority ? " · " + esc(x.priority) : ""}</div>
+    <div class="id">${/^\d+$/.test(x.id) ? "job-" : ""}${esc(x.id)}${x.priority ? " · " + esc(x.priority) : ""}</div>
     <div class="t">${esc(x.title)}</div>
     ${x.description ? `<div class="d">${esc(x.description)}</div>` : ""}</div>`;
 }
@@ -169,8 +169,8 @@ function openBacklog(id) {
   const x = BACKLOG.find(i => i.id === id) || {title:"", description:"", priority:"", created:""};
   const opt = v => `<option value="${v}" ${x.priority===v?"selected":""}>${v||"none"}</option>`;
   document.getElementById("drawer-body").innerHTML = `<div class="form">
-    <h2 style="margin-top:0">${id ? "Backlog item " + esc(id) : "New backlog item"}</h2>
-    ${x.created ? `<div class="muted">Added ${esc(new Date(x.created).toLocaleString())} · not started. Run <code>/sdlc:start ${esc(x.title)}</code> to begin.</div>` : ""}
+    <h2 style="margin-top:0">${id ? (/^\d+$/.test(id) ? "job-" : "Backlog item ") + esc(id) : "New backlog item"}</h2>
+    ${x.created ? `<div class="muted">Added ${esc(new Date(x.created).toLocaleString())} · not started. Run <code>/sdlc:start ${esc(id)}</code> to begin.</div>` : ""}
     <label>Title</label><input id="bl-title" value="${esc(x.title)}">
     <label>Description</label><textarea id="bl-desc" placeholder="What should be built? Acceptance criteria, links, constraints...">${esc(x.description)}</textarea>
     <label>Priority</label><select id="bl-pri">${["","low","medium","high"].map(opt).join("")}</select>

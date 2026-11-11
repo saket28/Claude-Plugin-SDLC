@@ -684,8 +684,8 @@ class Pipeline:
         try:
             if self.cfg.v("release.cleanup.worktree"):
                 git("worktree", "remove", "--force", str(self.wt), cwd=self.cfg.root, check=False)
-            if self.cfg.v("release.merge.delete_branch") and not self.host.has_prs:
-                git("branch", "-D", self.meta["branch"], cwd=self.cfg.root, check=False)   # GitHub deletes its own
+            if self.cfg.v("release.merge.delete_branch"):
+                git("branch", "-D", self.meta["branch"], cwd=self.cfg.root, check=False)   # after the worktree is gone
         except Exception:  # noqa: BLE001
             pass
         self.link_session(closing=True)

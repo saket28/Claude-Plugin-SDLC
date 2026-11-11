@@ -211,11 +211,15 @@ class GitHubHost(Adapter):
         if self.op_pr_status(branch=branch).get("merged"):
             return {"merged": True}
         strategy = strategy if strategy in ("squash", "merge", "rebase") else "squash"
-        extra = (["--subject", message] if message and strategy != "rebase" else []) + (
-            ["--delete-branch"] if delete_branch else [])
+        extra = ["--subject", message] if message and strategy != "rebase" else []
+        # Never pass --delete-branch: gh merges, then tries to delete the *local* branch, which the job's
+        # worktree still has checked out, and exits non-zero even though the PR is merged.
         r = self.gh("pr", "merge", branch, "--" + strategy, *extra, check=False)
-        if r.returncode != 0:
+        if r.returncode != 0 and not self.op_pr_status(branch=branch).get("merged"):
             return {"merged": False, "reason": (r.stderr or r.stdout).strip()[:500]}
+        if delete_branch:                  # the remote branch; the local one goes when the worktree does
+            subprocess.run(["git", "push", "origin", "--delete", branch], cwd=self.cfg.root,
+                           capture_output=True, text=True, check=False)
         return {"merged": True}
 
     def op_publish_release(self, tag, notes_file, **_):

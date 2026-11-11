@@ -9,7 +9,7 @@ A feature goes through: **spec → build → verify → review → merge**. You 
 | `/sdlc:help [topic]` | Show this help. Topics: `commands`, `flow`, `reviewers`, `config` | `/sdlc:help reviewers` |
 | `/sdlc:init` | Set up a repo once: writes `SDLC.md`, `REVIEW.md`, `.sdlc/` | `/sdlc:init` |
 | `/sdlc:intake <text>` | Park a feature in the backlog without starting it | `/sdlc:intake Add CSV export` |
-| `/sdlc:start [id \| text]` | Start the next backlog item, a new feature, or resume/retry a job | `/sdlc:start Add rate limiting` |
+| `/sdlc:start [id \| text]` | Start the next backlog item, a backlog card by its number (`/sdlc:start 6`), a new feature, or resume/retry a job | `/sdlc:start Add rate limiting` |
 | `/sdlc:status [id] [--check]` | See jobs, stages, tokens, and what is waiting on you. `--check` is a health check | `/sdlc:status --check` |
 | `/sdlc:approve <id> <gate>` | Pass a gate: `spec`, `merge`, `budget +500k`, `override`, `retry` | `/sdlc:approve 12 spec` |
 | `/sdlc:rework <id> "<feedback>"` | Send a job back to the builder with your feedback | `/sdlc:rework 12 "Handle empty input"` |

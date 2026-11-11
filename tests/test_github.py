@@ -24,6 +24,14 @@ elif a[:2] == ["pr", "view"]:
     out = json.dumps(st.get("view", {"statusCheckRollup": [], "reviewDecision": "", "mergeStateStatus": "CLEAN",
                                       "state": "OPEN"}))
 elif a[:2] == ["pr", "merge"]:
+    if "--delete-branch" in a and st.get("branch_in_worktree"):     # what real gh does: merges, then fails locally
+        st["view"] = {**st.get("view", {}), "state": "MERGED"}
+        json.dump(st, open(state_f, "w"))
+        print("failed to delete local branch b: cannot delete branch 'b' used by worktree", file=sys.stderr); sys.exit(1)
+    if st.get("fail_after_merge"):                                  # merged, but gh still exits non-zero
+        st["view"] = {**st.get("view", {}), "state": "MERGED"}
+        json.dump(st, open(state_f, "w"))
+        print("something went wrong after merging", file=sys.stderr); sys.exit(1)
     if st.get("refuse_merge"):
         json.dump(st, open(state_f, "w")); print("Pull request is not mergeable: review required", file=sys.stderr); sys.exit(1)
     st["view"] = {**st.get("view", {}), "state": "MERGED"}
@@ -105,7 +113,27 @@ class GitHubHostTest(unittest.TestCase):
         h.call("merge", branch="c", strategy="rebase", message="ignored", delete_branch=True)
         merge = [c for c in self.gh_state()["calls"] if c[:2] == ["pr", "merge"]][-1]
         self.assertNotIn("--subject", merge)                      # a rebase merge has no commit message
-        self.assertIn("--delete-branch", merge)
+        self.assertNotIn("--delete-branch", merge)                # we delete branches ourselves, see below
+
+    def test_merge_succeeds_even_when_gh_cannot_delete_the_local_branch(self):
+        # job-2, job-3 and job-4 of a real repo stuck at "merge refused: failed to delete local branch ..."
+        self.set_view()
+        st = self.gh_state(); st["branch_in_worktree"] = True; self.state.write_text(json.dumps(st))
+        r = self.host.call("merge", branch="b", strategy="squash", delete_branch=True)
+        self.assertTrue(r["merged"], r)
+        self.assertNotIn("--delete-branch", [x for c in self.gh_state()["calls"] if c[:2] == ["pr", "merge"] for x in c])
+        # and if gh does fail after merging, a merged PR still counts as merged
+        self.assertEqual(self.host.call("pr_status", branch="b")["merged"], True)
+
+    def test_a_merged_pr_counts_even_if_gh_exits_non_zero_for_another_reason(self):
+        self.set_view()
+        st = self.gh_state(); st["fail_after_merge"] = True; self.state.write_text(json.dumps(st))
+        self.assertTrue(self.host.call("merge", branch="b")["merged"])
+
+    def test_a_failed_merge_that_did_not_merge_is_still_refused(self):
+        self.set_view()
+        st = self.gh_state(); st["refuse_merge"] = True; self.state.write_text(json.dumps(st))
+        self.assertFalse(self.host.call("merge", branch="b")["merged"])
 
     def test_command_override_for_one_operation(self):
         repo = make_repo("---\nrelease:\n  host:\n    adapter: github\n    ops:\n"
