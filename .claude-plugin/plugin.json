@@ -1,7 +1,7 @@
 {
   "name": "sdlc",
   "displayName": "SDLC",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Runs features through spec, build, verify, review and merge with token budgets, guardrails and a retro that improves every run.",
   "author": {
     "name": "Saket Porwal"

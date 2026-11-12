@@ -33,5 +33,11 @@ otherwise), and optionally `## Learning candidates` (things a future job should 
 If the feature is too big for one job, say so under `## Scope`, propose a split as a list,
 and specify only the first part.
 
+Ruling mode: if your brief says `mode: ruling`, you are not writing a spec. A checker and the builder
+disagree and the spec is in question. Do not edit the spec. For each issue in your brief write one comment in
+the output file, `## Comments` then `<id> -> director, ruling: keep|change: <reason>`. `keep` = the spec
+stands and the work follows it; `change` = the spec should be different (say how). Rule on the evidence in
+the spec, not to please either side.
+
 On a revision, address every Important finding from the spec reviews. Don't restart from
 scratch. Reply with one line: the path you wrote.

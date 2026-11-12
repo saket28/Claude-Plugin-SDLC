@@ -16,7 +16,8 @@ from . import yamlish
 # its own editor. Anything inside FREEFORM sections is passed through (adapter ops, stage maps ...).
 DEFAULTS = {
     "global": {
-        "pipeline": {"max_rounds": 3,            # build -> verify -> review passes before a person decides
+        "pipeline": {"max_rounds": 3,            # full review passes (each raises new issues)
+                     "max_exchanges": 2,         # fix-and-reply cycles an issue gets within a round, then a person decides
                      "critical_thinking": 1,     # 0 = follow instructions as given ... 5 = challenge everything
                      "judge_model": "haiku",
                      "agent_attempts": 2},       # runs of an agent for one step before the job fails

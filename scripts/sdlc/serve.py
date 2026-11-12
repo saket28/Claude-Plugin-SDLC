@@ -14,7 +14,7 @@ import socketserver
 import urllib.parse
 from pathlib import Path
 
-from . import briefs, config as config_mod, configedit, pipeline, principles as principles_mod, reviewers as reviewers_mod, runners
+from . import briefs, config as config_mod, configedit, pipeline, principles as principles_mod, reviewers as reviewers_mod, runners, thread
 from .store import Store
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -29,39 +29,28 @@ def _ts(s):
 
 
 EXPLAIN = {
-    "max-rounds": "The job used all {n} allowed rounds (global.pipeline.max_rounds = {n}) and the "
-                  "reviewers still have blocking findings. Decide whether the remaining "
-                  "findings matter.",
+    "exchanges": "A verify, CI or merge failure kept coming back after {x} fix attempts "
+                 "(global.pipeline.max_exchanges). Decide whether to merge anyway or send it back.",
+    "ruling": "The checks fail after your ruling was applied, so the issue is not settled.",
     "budget": "The job hit its token budget. Raise the budget to continue, or send it back with new direction.",
     "spec-max": "The spec reviewers still object after the maximum number of spec revisions.",
     "rules": "A merge rule (see config) is not satisfied, so the job cannot merge by itself.",
-    "stalemate": "The builder disputed a finding or a test and the reviewer or tester held their ground. "
-                 "Neither side will move, so a person has to decide who is right.",
+    "stalemate": "Issues were still open after {x} exchange(s) (global.pipeline.max_exchanges), or the "
+                 "spec-writer says the spec should change. Neither side will move, so a person has to decide.",
     "adapter": "A git, PR or CI step failed in a way the pipeline could not recover from.",
     "setup": "The setup command failed, so the worktree is not ready.",
 }
 
 
 def _findings(folder):
-    """Open review findings of one round: [{reviewer, verdict, severity, title, why}]."""
+    """What the reviewers raised in one round: [{reviewer, verdict, severity, title, why}]."""
     out = []
     for f in sorted(folder.glob("review-*.md")):
         front, body = runners.read_artifact(f)
-        if not front or not body:
-            continue
-        reviewer, sev, item = f.stem[len("review-"):], "", None
-        for line in body.splitlines():
-            m = re.match(r"##\s+(.*)", line)
-            if m:
-                sev, item = m.group(1).strip(), None
-                continue
-            m = re.match(r"\d+\.\s+(.*)", line)
-            if m and sev:
-                item = {"reviewer": reviewer, "verdict": front.get("verdict"), "severity": sev,
-                        "title": m.group(1).strip(), "why": ""}
-                out.append(item)
-            elif item and line.startswith((" ", "\t")) and not item["why"]:
-                item["why"] = line.strip()
+        if front and body:
+            out += [{"reviewer": f.stem[len("review-"):], "verdict": front.get("verdict"),
+                     "severity": c["severity"] or "blocking", "title": c["text"], "why": c["detail"]}
+                    for c in thread.parse_comments(body) if c["id"] == "new"]
     return out
 
 
@@ -105,13 +94,15 @@ def help_for(p, st, status, gate, idle=False):
         approve, rework = f"/sdlc:approve {j} ", f'/sdlc:rework {j} "what to change"'
         acts = {"budget": [A(approve + "budget +500k", "raise the budget"), A(rework)],
                 "spec-max": [A(approve + "spec", "accept the spec as it is"), A(rework)],
-                "max-rounds": [A(approve + "override", "merge despite the open findings"),
-                               A(rework, "send back with your own direction")],
+                "exchanges": [A(approve + "override", "merge despite the failure"),
+                              A(rework, "send back with your own direction")],
+                "ruling": [A(approve + "override"), A(rework)],
                 "rules": [A(approve + "override"), A(rework)],
                 "stalemate": [A(approve + "override", "side with the builder: accept the work as it is"),
-                              A(rework, "side with the checker: send it back with your ruling")],
+                              A(rework, "side with the checker: send it back with your ruling"),
+                              A(rework + " --spec", "the spec is wrong: the spec-writer changes it, then the builder rebuilds")],
                 "adapter": [A(approve + "retry")]}.get(reason, [A(f"/sdlc:status {j}")])
-        return {"title": f"Human required: {reason}", "explain": EXPLAIN.get(reason, "").format(n=p.cfg.v("global.pipeline.max_rounds")),
+        return {"title": f"Human required: {reason}", "explain": EXPLAIN.get(reason, "").format(n=p.cfg.v("global.pipeline.max_rounds"), x=p.cfg.v("global.pipeline.max_exchanges")),
                 "history": (st.needs_human or {}).get("detail", ""), "actions": acts}
     if gate:
         cmd = f"/sdlc:approve {j} {gate}"
@@ -172,8 +163,17 @@ def job_summary(cfg, meta, detail=False):
                    timeline=_enrich(timeline(events, by_stage), p, _rounds(p, events), out["help"], events, cfg),
                    alerts=Store(cfg).alerts(meta["id"]), overrides=st.overrides, max_rounds=cfg.v("global.pipeline.max_rounds"),
                    blocks=[e for e in events if e["type"] in ("guardrail_block", "error", "retry")][-20:],
-                   applied=sorted(set(_applied(p.dir))))
+                   applied=_applied_entries(cfg, p.dir), threads=thread.threads(p.dir))
     return out
+
+
+def _applied_entries(cfg, d):
+    """The learnings and answers a job cited (`applied: L-xxxx`), with their text from SDLC.md.
+    One that has since been deleted from SDLC.md is still listed, marked as removed."""
+    body = cfg.body_sections()
+    known = {e["id"]: e for sec in ("Learnings", "Answers") for e in briefs.parse_entries(body.get(sec, ""))}
+    return [{"id": i, "roles": (known.get(i) or {}).get("roles", []), "text": (known.get(i) or {}).get("text", ""),
+             "removed": i not in known} for i in sorted(set(_applied(d)))]
 
 
 def _applied(d):

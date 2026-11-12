@@ -12,4 +12,9 @@ Every artifact starts with YAML frontmatter (the restricted subset in INSTRUCTIO
 | `decision.md` | `decision` (MERGE/ESCALATE), `override` |
 
 Sections every agent may add: `## Questions`, `## Learning candidates`.
-Reviews list findings under `## Important` and `## Nit`, each as `path:line` + what + why + fix.
+Agents talk to each other in a `## Comments` section, one line per comment:
+`<id|new> -> <to>, <type>[, <severity>]: <text>` (indented lines are detail).
+- `type`: `feedback` (raise an issue; severity `blocking` or `nit`), `pushback`, `fixed` (builder), `accept`, `ruling` (spec-writer: `keep` or `change`).
+- `to`: `builder`, `tester`, `<name>-reviewer`, `spec-writer`. Unknown names are redirected.
+- New issues use `new`; the director numbers them `I1`, `I2` … and keeps them in `threads.jsonl` (readable copy: `conversation.md`).
+- The raiser's `accept` closes an issue; a nit pushback closes it; the raiser repeating a pushback is a stalemate (human); a checker that says nothing about an issue addressed to it closes it as "no reply".

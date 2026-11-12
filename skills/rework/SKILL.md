@@ -1,7 +1,7 @@
 ---
 name: rework
-description: Send an SDLC job back to the builder with your feedback.
-argument-hint: "<job-id> <feedback>"
+description: Give your ruling on an SDLC job's open issues: the builder applies it (add --spec to change the spec first).
+argument-hint: "<job-id> [--spec] <ruling>"
 disable-model-invocation: true
 allowed-tools: Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py" *)
 ---

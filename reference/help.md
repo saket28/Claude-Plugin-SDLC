@@ -22,7 +22,7 @@ A feature goes through: **spec → build → verify → review → merge**. You 
 1. `spec`: the spec-writer writes `spec.md` with testable acceptance criteria. Spec reviewers (`at: spec`) check it. Gate `spec` (off by default; set `spec.gate.mode: human` to approve specs yourself).
 2. `build`: the builder implements it in its own worktree (`<repo>.sdlc-worktrees/job-<n>`).
 3. `verify`: your `global.command` settings (lint, build, test) run, and an independent tester writes and runs acceptance tests. Failures go back to the builder.
-4. `review`: reviewers with `at: review` run in parallel. Any **Important** finding sends the job back to the builder, until `global.pipeline.max_rounds` rounds (default 3; a round is one pass of build, verify and review) are used, then `needs-human`.
+4. `review`: the tests and reviewers with `at: review` look at the code and raise issues (a **round**). The builder and checkers then answer each other on each issue, up to `global.pipeline.max_exchanges` times (default 2); what is still open goes to you. When a round's issues are all closed, the code is reviewed again, up to `global.pipeline.max_rounds` rounds (default 3).
 5. `merge`: reviewers with `at: merge`, CI, rules, then the `merge` gate (default: human).
 
 When a job is human required (a decision, a stalemate between agents, a failure), `/sdlc:status` shows the command that moves it forward.
@@ -80,7 +80,7 @@ Agents can question their instructions before acting, and push back with evidenc
 | 4 | Sceptical | Assumes there are mistakes until checked. Pushes back early and says what would change its mind. |
 | 5 | Adversarial | Challenges every assumption, including the task itself. Proposes a better approach before starting. |
 
-Objections go through the channel the role already has: the builder disputes a finding, the tester flags a spec gap, a reviewer keeps or withdraws a finding. When the builder disputes something and the reviewer or tester keeps it, neither side will move, so the job is **human required** (a stalemate) and you decide.
+Agents talk in threads, one per issue, shown under Conversation in the job detail and in `conversation.md`. A reviewer or the tester raises an issue (blocking or nit), the builder fixes it or pushes back, and the raiser accepts or pushes back again. A plain-code director routes each comment, closes an issue when its raiser accepts, and sends it to you when the two sides still disagree (a stalemate) or the rounds run out. A checker can also ask the spec-writer to rule when the spec itself is wrong. You answer with `approve override` (the work stands), `rework "ruling"` (the builder applies it as the final exchange) or `rework --spec "ruling"` (the spec-writer changes the spec first, then the builder and tester follow). Issues are grouped by round.
 
 ## Config
 

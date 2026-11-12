@@ -128,13 +128,48 @@ class ServeTest(unittest.TestCase):
         agents.test_verdict, agents.dispute, agents.upheld = "FAIL", True, 1
         drive(self.cfg, job, agents)
         j = {x["id"]: x for x in self.req("/api/board")[1]["jobs"]}[job]
-        self.assertEqual((j["status"], j["stage"], j["human"]), ("verify", "verify", "stalemate"))
+        self.assertEqual((j["status"], j["stage"], j["human"]), ("review", "review", "stalemate"))
         self.assertEqual(j["help"]["title"], "Human required: stalemate")
-        self.assertEqual(len(j["help"]["actions"]), 2)
+        self.assertEqual(len(j["help"]["actions"]), 3)
         kinds = {a["kind"] for a in self.req(f"/api/job?id={job}")[1]["alerts"]}
         self.assertIn("human", kinds)
         self.assertNotIn("needs-human", kinds)
         self.assertIsNone({x["id"]: x for x in self.req("/api/board")[1]["jobs"]}[self.job]["human"])
+
+    def test_a_done_job_raises_no_alert(self):
+        self.assertEqual(self.req(f"/api/job?id={self.job}")[1]["alerts"], [])
+        self.assertEqual(self.req("/api/board")[1]["jobs"][0]["alerts"], 0)
+
+    def test_applied_learnings_come_with_their_text(self):
+        import tempfile
+        from pathlib import Path
+        repo = make_repo("---\n---\n\n## Answers\n- [A-0001] all · Auth on new endpoints? Yes. (job-1)\n\n"
+                         "## Learnings\n- [L-ab12] builder, tester · Run the seed first. (job-1)\n")
+        self.addCleanup(shutil.rmtree, repo.parent, ignore_errors=True)
+        cfg = config.load(repo)
+        d = Path(tempfile.mkdtemp())
+        (d / "build.md").write_text("applied: L-ab12\napplied: A-0001\napplied: L-dead\n")
+        got = {e["id"]: e for e in serve._applied_entries(cfg, d)}
+        self.assertEqual(got["L-ab12"]["text"], "Run the seed first. (job-1)")
+        self.assertEqual(got["L-ab12"]["roles"], ["builder", "tester"])
+        self.assertIn("Auth on new endpoints", got["A-0001"]["text"])
+        self.assertEqual((got["L-dead"]["removed"], got["L-dead"]["text"]), (True, ""))     # deleted from the file since
+
+    def test_job_detail_carries_the_conversation(self):
+        job = Store(self.cfg).create_job("Talk")["id"]
+        d = Store(self.cfg).job_dir(job)
+        (d / "round-1").mkdir()
+        (d / "round-1" / "review-code.md").write_text(
+            "---\nverdict: CHANGES\n---\n## Comments\n- new -> builder, feedback, blocking: Bad input\n")
+        (d / "round-2").mkdir()
+        (d / "round-2" / "build.md").write_text("---\nround: 2\n---\n## Comments\n- I1 -> code-reviewer, fixed: validated\n")
+        p = pipeline.Pipeline(self.cfg, job)
+        p.ingest(1)
+        p.ingest(2)
+        got = self.req(f"/api/job?id={job}")[1]["threads"]
+        self.assertEqual([(t["id"], t["state"], t["severity"], t["by"]) for t in got], [("I1", "open", "blocking", "code-reviewer")])
+        self.assertEqual([(x["from"], x["to"], x["type"]) for x in got[0]["lines"]],
+                         [("code-reviewer", "builder", "feedback"), ("builder", "code-reviewer", "fixed")])
 
     def test_delete_only_a_done_job(self):
         stuck = Store(self.cfg).create_job("Not finished")["id"]
@@ -210,9 +245,10 @@ class FindingsTest(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         (d / "review-code.md").write_text(
             "---\nverdict: CHANGES\n---\n\n# Review: code\n\n## Important\n"
-            "1. `a.py:1` Bad redirect.\n   Tabs bypass the regex.\n2. `b.py:2` Second.\n\n## Nit\n1. Tiny.\n")
+            "## Comments\n- new -> builder, feedback, blocking: `a.py:1` Bad redirect.\n   Tabs bypass the regex.\n"
+            "- new -> builder, feedback, blocking: `b.py:2` Second.\n- new -> builder, feedback, nit: Tiny.\n- I1 -> builder, accept\n")
         fs = serve._findings(d)
-        self.assertEqual([f["severity"] for f in fs], ["Important", "Important", "Nit"])
+        self.assertEqual([f["severity"] for f in fs], ["blocking", "blocking", "nit"])
         self.assertEqual(fs[0]["why"], "Tabs bypass the regex.")
         shutil.rmtree(d)
 

@@ -21,7 +21,7 @@
   .bar i { display:block; height:100%; background:var(--accent); }
   .bar i.warn { background:var(--wait); } .bar i.over { background:var(--fail); }
   main { padding:16px 20px; }
-  .board { display:grid; grid-template-columns:repeat(8, minmax(140px, 1fr)); gap:10px; }
+  .board { display:grid; grid-template-columns:repeat(7, minmax(140px, 1fr)); gap:10px; }
   .col { background:var(--chip); border-radius:10px; padding:8px; align-self:start; min-height:120px; }
   .col h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:2px 4px 8px; font-weight:600; }
   .col .count { font-weight:400; }
@@ -45,7 +45,7 @@
   .chip.skipped { opacity:.5; text-decoration:line-through; }
   .badge { font-size:11px; padding:1px 6px; border-radius:4px; background:var(--wait); color:#fff; }
   .card .why { font-size:12px; color:var(--muted); margin-top:6px; }
-  .md { max-width:900px; font-size:14px; line-height:1.55; }
+  .md { font-size:14px; line-height:1.55; }
   .md h1 { font-size:20px; margin:0 0 10px; } .md h2 { font-size:16px; margin:22px 0 8px; } .md h3 { font-size:14px; margin:16px 0 6px; }
   .md code { background:var(--card, rgba(127,127,127,.15)); padding:1px 5px; border-radius:4px; font-size:12.5px; }
   .md pre { background:rgba(127,127,127,.12); padding:10px 12px; border-radius:6px; overflow:auto; } .md pre code { background:none; padding:0; }
@@ -59,13 +59,17 @@
   details.round summary { cursor:pointer; font-weight:600; }
   .rev { margin:6px 0; }
   .finding { margin:8px 0; }
+  .thr { margin:8px 0; padding-left:8px; border-left:3px solid var(--chip); }
+  .thr.human { border-color:var(--changes); } .thr.open { border-color:var(--accent); }
+  .thr .step { font-size:13px; margin:2px 0 2px 24px; } .thr .step b { font-weight:600; }
+  .thr .step.pushback b { color:var(--changes); } .thr .step.dir { color:var(--muted); }
   .finding .sev { font-size:11px; text-transform:uppercase; color:var(--muted); }
   .badge.fail { background:var(--fail); }
   .tok { height:4px; background:var(--chip); border-radius:2px; overflow:hidden; margin-top:6px; }
   .tok i { display:block; height:100%; background:var(--accent); }
   .alert { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-radius:6px; background:var(--chip); margin:4px 0; font-size:13px; }
   .alert .k { font-size:11px; font-weight:600; text-transform:uppercase; min-width:92px; }
-  .alert.human .k, .alert.failed .k, .alert.error .k, .alert.needs-human .k { color:var(--fail); } .alert.done .k { color:var(--pass); } .alert.budget-warning .k { color:var(--wait); }
+  .alert.human .k, .alert.failed .k, .alert.error .k, .alert.needs-human .k { color:var(--fail); } .alert.budget-warning .k { color:var(--wait); }
   .alert .x { margin-left:auto; cursor:pointer; color:var(--muted); background:none; border:0; font:inherit; }
   .bell { display:inline-flex; align-items:center; gap:3px; margin-left:6px; color:var(--wait); font-size:11px; vertical-align:middle; }
   .bell.human { color:var(--fail); }
@@ -92,7 +96,6 @@
   th { color:var(--muted); font-weight:500; }
   .files a { display:inline-block; margin:2px 8px 2px 0; color:var(--accent); cursor:pointer; font-size:13px; }
   pre.md { white-space:pre-wrap; background:var(--chip); padding:12px; border-radius:6px; font:12px/1.5 ui-monospace, Menlo, monospace; }
-  .settings { max-width:900px; }
   .rv-err { color:#e5484d; cursor:pointer; }
   .rv-file { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
   .rv-errtext { color:#e5484d; margin-left:6px; }
@@ -218,6 +221,24 @@ async function loadBoard() {
   }).join("");
 }
 
+function threadHtml(t) {
+  const line = x => x.type === "decision"
+    ? `<div class="step dir"><b>director</b>: ${esc(x.text)}</div>`
+    : `<div class="step ${esc(x.type)}"><b>${esc(x.from)}</b> <span class="muted">→ ${esc(x.to)}</span> <small class="muted">${esc(x.type)}</small>: ${esc(x.text)}${x.detail ? ` <span class="muted">${esc(x.detail)}</span>` : ""}</div>`;
+  const box = t.state === "closed" ? "[x]" : "[&nbsp;]";
+  const chip = t.state === "human" ? ' <span class="chip CHANGES">human</span>' : t.flag === "no_reply" ? ' <small class="muted">no reply</small>' : "";
+  return `<div class="thr ${esc(t.state)}"><div><code>${box}</code> <b>${esc(t.id)}</b> ${esc(t.title)} <small class="muted">${esc(t.severity)}</small>${chip}</div>${t.lines.map(line).join("")}</div>`;
+}
+function conversationHtml(j) {
+  const ts = j.threads || [];
+  if (!ts.length) return "";
+  const rounds = [...new Set(ts.map(t => t.r))].sort((a, b) => a - b);
+  const group = r => {
+    const mine = ts.filter(t => t.r === r), live = mine.filter(t => t.state === "human" || t.state === "open"), rest = mine.filter(t => !live.includes(t));
+    return `<h4>r${r} <small class="muted">${live.length ? live.length + " open" : "all closed"}</small></h4>${live.map(threadHtml).join("")}${rest.length ? `<details${live.length ? "" : " open"}><summary class="muted">Closed or noted (${rest.length})</summary>${rest.map(threadHtml).join("")}</details>` : ""}`;
+  };
+  return `<h3>Conversation <small class="muted">${ts.length} issue${ts.length > 1 ? "s" : ""}</small></h3>${rounds.map(group).join("")}`;
+}
 const sevOf = f => /^nit/i.test(f.severity) ? "nit" : "important";
 function findingHtml(f) {
   return `<div class="finding"><span class="sev">${esc(f.severity)}</span><div>${esc(f.title)}</div>${f.why ? `<div class="muted">${esc(f.why)}</div>` : ""}</div>`;
@@ -288,8 +309,9 @@ async function openJob(id) {
     <div class="muted">Created ${esc(j.created ? new Date(j.created).toLocaleString() : "")}${j.owner ? " by " + esc(j.owner) : ""}</div>
     ${alertsHtml(j)}
     <h3>Timeline <small class="muted">click a step for details</small></h3>${timelineHtml(j)}
+    ${conversationHtml(j)}
     ${blocks ? `<h3>Errors and guardrail blocks</h3><table>${blocks}</table>` : ""}
-    ${j.applied.length ? `<h3>Learnings applied</h3><p>${j.applied.map(esc).join(", ")}</p>` : ""}
+    ${j.applied.length ? `<h3>Learnings applied</h3>${j.applied.map(a => `<div class="entry"><code>${esc(a.id)}</code><span style="flex:1">${a.removed ? '<span class="muted">no longer in the file</span>' : esc((a.roles || []).join(", ")) + " · " + esc(a.text)}</span></div>`).join("")}` : ""}
     ${j.status === "done" ? `<div class="actions"><button class="danger" onclick="delJob('${esc(j.id)}')">Delete this job</button></div>` : ""}`;
   document.getElementById("drawer").classList.add("open");
 }

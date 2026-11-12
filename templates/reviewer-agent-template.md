@@ -23,14 +23,16 @@ Write exactly one file, the `output` path in your brief:
 
 ```markdown
 ---
-verdict: PASS | CHANGES        # CHANGES if there is at least one Important finding
+verdict: PASS | CHANGES        # CHANGES if at least one of your issues is blocking and unresolved
 important: <count>
 nit: <count>
 ---
-## Important
-1. `path:line` the finding, why it matters, how to fix it
-## Nit
-1. ...
+## Comments
+- new -> builder, feedback, blocking: one-line summary of a new issue
+    `path:line`, why it matters, how to fix it
+- new -> builder, feedback, nit: ...
+- I3 -> builder, accept            (a thread addressed to you: accept the builder's fix or reply)
+- I4 -> builder, pushback: why the builder's reply doesn't hold
 ```
 
 Reply with one line: the path you wrote.

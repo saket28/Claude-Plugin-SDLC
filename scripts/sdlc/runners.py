@@ -94,7 +94,7 @@ def run_reviewer(name, spec, worktree, out_path):
     important = 0 if code == 0 else 1
     body = [f"# Review: {name}", "", f"`{spec['run']}` exited {code} after {secs}s.", ""]
     if code != 0:
-        body += ["## Important", f"1. `{spec['run']}` failed:", "```", tail(out), "```"]
+        body += ["## Comments", f"- new -> builder, feedback, blocking: `{spec['run']}` failed (exit {code})", "  " + tail(out, 5).replace("\n", " ")[:500]]
     write_artifact(out_path, {"verdict": verdict, "important": important, "nit": 0,
                               "engine": "run", "blocking": spec.get("blocking", True)}, "\n".join(body))
     return {"verdict": verdict, "usage": {"tokens": 0}}
@@ -186,16 +186,16 @@ def findings_artifact(name, engine, findings, out_path, blocking=True, raw=""):
     imp = [f for f in findings if str(f.get("severity", "")).lower() == "important"]
     nit = [f for f in findings if str(f.get("severity", "")).lower() == "nit"]
     body = [f"# Review: {name}", ""]
-    for title, group in (("Important", imp), ("Nit", nit)):
-        if group:
-            body.append(f"## {title}")
-            for i, f in enumerate(group, 1):
+    if imp or nit:
+        body.append("## Comments")
+        for sev, group in (("blocking", imp), ("nit", nit)):
+            for f in group:
                 loc = f"`{f.get('file')}:{f.get('line')}` " if f.get("file") else ""
-                body.append(f"{i}. {loc}{f.get('summary', '')}")
+                body.append(f"- new -> builder, feedback, {sev}: {loc}{f.get('summary', '')}")
                 for k in ("detail", "failure_scenario"):
                     if f.get(k):
                         body.append(f"   {f[k]}")
-            body.append("")
+        body.append("")
     if not imp and not nit:
         body.append("No findings.")
     write_artifact(out_path, {"verdict": "CHANGES" if imp else "PASS", "important": len(imp),

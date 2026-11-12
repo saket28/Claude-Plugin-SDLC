@@ -66,6 +66,34 @@ class SettingsBehaviourTest(unittest.TestCase):
         self.assertIn("timed out after 1s", (repo / "v.md").read_text())
 
     # ---- pipeline ---------------------------------------------------------
+    def test_max_exchanges_bounds_the_reply_cycles_per_round(self):
+        for cap in (1, 3):
+            repo, cfg = self.repo({"global": {"pipeline": {"max_exchanges": cap}}})
+            job = self.job(cfg)["id"]
+            agents = Agents()
+            agents.test_verdict, agents.dispute, agents.upheld = "FAIL", True, 1
+            act = drive(cfg, job, agents)
+            self.assertIn("stalemate", act["reason"])
+            self.assertEqual(agents.calls.count("sdlc:builder"), 1 + cap)        # the build, then `cap` exchanges
+
+    def test_max_rounds_bounds_the_full_review_passes(self):
+        repo, cfg = self.repo({"global": {"pipeline": {"max_rounds": 1}}})
+        job = self.job(cfg)["id"]
+        agents = Agents()
+        agents.test_verdict = "FAIL"
+        self._pass_after_first_failure(agents)
+        self.assertEqual(drive(cfg, job, agents)["action"], "done")
+        self.assertEqual([e["r"] for e in Store(cfg).events(job["id"] if isinstance(job, dict) else job) if e["type"] == "round"], [1, 1])   # no second review round
+
+    def _pass_after_first_failure(self, agents):
+        real = agents.run
+
+        def run(action):
+            real(action)
+            if action["agents"][0]["agent"] == "sdlc:tester":
+                agents.test_verdict = "PASS"
+        agents.run = run
+
     def test_agent_attempts(self):
         for attempts, spawns in ((1, 1), (3, 3)):
             repo, cfg = self.repo({"global": {"pipeline": {"agent_attempts": attempts}}})

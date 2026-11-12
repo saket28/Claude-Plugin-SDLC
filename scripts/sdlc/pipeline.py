@@ -15,10 +15,11 @@ any point and a deleted job folder simply stops existing.
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
-from . import adapters, briefs, principles, reviewers as reviewers_mod, rules, runners, usage, yamlish
+from . import adapters, briefs, principles, reviewers as reviewers_mod, rules, runners, thread, usage, yamlish
 from .config import git
 from .store import Store
 
@@ -34,8 +35,14 @@ class State:
     def __init__(self, events):
         self.events = events
         self.stage = "queued"
-        self.round = 0
-        self.auto_rounds = 0
+        self.round = 0             # the cycle: one run of build -> verify -> checks (round-N folder)
+        self.r = 1                 # the review round the cycle belongs to
+        self.x = 0                 # 0 = the round's full review pass, 1.. = its exchanges
+        self.final = False         # the cycle applies a human ruling
+        self.skip_build = False    # a review pass of the code as it stands
+        self.cycles = {}           # cycle -> (r, x, final)
+        self.fixes = {}            # r -> mechanical fix cycles used (verify, CI, conflicts)
+        self.spec_ruling = False
         self.spec_rev = 0
         self.spec_revisions = 0
         self.needs_human = None
@@ -60,10 +67,14 @@ class State:
             self.stage = e["stage"]
         elif t == "round":
             self.round = e["n"]
-            if e.get("auto"):
-                self.auto_rounds += 1
+            self.r, self.x = e.get("r", self.r), e.get("x", 0)
+            self.final, self.skip_build, self.spec_ruling = bool(e.get("final")), bool(e.get("skip_build")), False
+            self.cycles[self.round] = (self.r, self.x, self.final)
+            if e.get("fix"):
+                self.fixes[self.r] = self.fixes.get(self.r, 0) + 1
         elif t == "spec_rev":
             self.spec_rev = e["n"]
+            self.spec_ruling = bool(e.get("ruling"))
             if e.get("counts"):
                 self.spec_revisions += 1
         elif t == "needs_human":
@@ -144,7 +155,8 @@ class Pipeline:
         j = self.job_id
         return {"budget": f"/sdlc:approve {j} budget +500k  (or /sdlc:rework {j} \"...\")",
                 "spec-max": f"/sdlc:approve {j} spec  (accept the spec as it is)",
-                "max-rounds": f"/sdlc:approve {j} override  (merge anyway) or /sdlc:rework {j} \"...\"",
+                "exchanges": f"/sdlc:approve {j} override  (merge anyway) or /sdlc:rework {j} \"...\"",
+                "ruling": f"/sdlc:approve {j} override  (merge anyway) or /sdlc:rework {j} \"...\"",
                 "rules": f"/sdlc:approve {j} override  or /sdlc:rework {j} \"...\"",
                 "stalemate": f"/sdlc:approve {j} override  (side with the builder) or /sdlc:rework {j} \"your ruling\"",
                 "adapter": f"/sdlc:approve {j} retry",
@@ -253,15 +265,41 @@ class Pipeline:
                 "paths": paths}
 
     # ------------------------------------------------------------ rounds --
-    def new_round(self, reason, step, detail=""):
+    def cycle(self, st, reason, step, r=None, x=None, final=False, skip_build=False, fix=False):
+        """Start the next cycle: a builder run (or, for a new review round, just the checks) in a new
+        round-N folder. A review round is a full pass (x=0) plus up to `max_exchanges` exchanges."""
+        n = st.round + 1
+        self.round_dir(n).mkdir(parents=True, exist_ok=True)
+        self.ev("round", n=n, r=r or st.r, x=st.x if x is None else x, reason=reason, step=step,
+                final=final, skip_build=skip_build, fix=fix, auto=not final)
+        self.ev("stage", stage="verify" if skip_build else "build")
+        return None
+
+    def fix_cycle(self, reason, step, detail=""):
+        """A mechanical failure (verify, CI, a merge conflict): the builder gets another go, at most
+        `max_exchanges` times per review round."""
         st = self.state()
-        if st.auto_rounds + 1 >= self.cfg.v("global.pipeline.max_rounds"):      # +1: the first build is a round too
-            history = [f"round {e['n']}: {e.get('reason')}" for e in st.events
-                       if e["type"] == "round" and e.get("auto")]
-            return self.needs_human("max-rounds", step,
-                                    "; ".join(history + [f"then: {detail or reason}"]))
-        self.ev("round", n=st.round + 1, auto=True, reason=reason, step=step)
-        self.ev("stage", stage="build")
+        if st.fixes.get(st.r, 0) >= self.cfg.v("global.pipeline.max_exchanges"):
+            return self.needs_human("exchanges", step, detail or reason)
+        return self.cycle(st, reason, step, fix=True)
+
+    def end_of_cycle(self, st, step):
+        """The director's decision once a cycle's checks are in: another exchange, the next review
+        round, the human, or on to the merge."""
+        if st.final:
+            thread.close_ruled(self.dir)
+        nits = self.cfg.v("review.severity.nits_block")
+        open_ = thread.open_blocking(self.dir, st.r, nits)
+        if open_:
+            cap = self.cfg.v("global.pipeline.max_exchanges")
+            if st.x >= cap:
+                thread.escalate(self.dir, f"still open after {cap} exchange(s)")
+                thread.write_view(self.dir)
+                return self.needs_human("stalemate", step, thread.human_detail(self.dir))
+            return self.cycle(st, f"exchange {st.x + 1}: " + ", ".join(i["id"] for i in open_), step, x=st.x + 1)
+        if thread.raised_blocking(self.dir, st.r) and st.r < self.cfg.v("global.pipeline.max_rounds"):
+            return self.cycle(st, "review again", step, r=st.r + 1, x=0, skip_build=True)
+        self.ev("stage", stage="merge")
         return None
 
     # ------------------------------------------------------------- main --
@@ -316,6 +354,8 @@ class Pipeline:
             ans = self.dir / "answers.md"
             if ans.exists():
                 sections.append(("Answers to your questions", ans.read_text()))
+            if st.spec_ruling and (self.dir / "ruling.md").exists():
+                sections.append(("Human ruling (change the spec to match it)", (self.dir / "ruling.md").read_text()))
             return self.spawn([(f"spec-r{st.spec_rev}", AGENT_FOR["spec"], "spec-writer",
                                 {"revision": st.spec_rev}, sections, spec_path)], "spec", 0)
         if int(front.get("open_questions") or 0) > 0 and st.answers_rev < st.spec_rev:
@@ -324,6 +364,10 @@ class Pipeline:
                     "spec": str(spec_path),
                     "note": "Answer from SDLC.md Answers/Learnings and CLAUDE.md where you can; ask the "
                             "human only what's left. Then: sdlc.py report <job> --answers <file>."}
+        if st.spec_ruling:                    # a human ruled: no spec reviews, straight to the build
+            self.cycle(st, "spec ruling", "spec", x=st.x + 1, final=True)
+            shutil.copy(self.dir / "ruling.md", self.round_dir(st.round + 1) / "feedback.md")
+            return None
         res = self.review_step("spec", st.spec_rev, self.dir / "spec-review" / f"r{st.spec_rev}")
         if res is not None:
             return res if isinstance(res, dict) else self._spec_changes(st, res)
@@ -332,7 +376,7 @@ class Pipeline:
             if st.gates.get("spec") != "waiting":
                 self.ev("gate", gate="spec", status="waiting")
             return self._wait("spec gate", f"Read {spec_path}, then /sdlc:approve {self.job_id} spec")
-        self.ev("round", n=1, auto=False, reason="start", step="build")
+        self.ev("round", n=1, r=1, x=0, auto=False, reason="start", step="build")
         self.ev("stage", stage="build")
         return None
 
@@ -346,6 +390,9 @@ class Pipeline:
     def do_build(self, st):
         rd = self.round_dir(st.round)
         build_md = rd / "build.md"
+        if st.skip_build:                     # a new review round looks at the code as it stands
+            self.ev("stage", stage="verify")
+            return None
         if not build_md.exists():
             return self.spawn([(f"build-r{st.round}", AGENT_FOR["build"], "builder", {},
                                 self._build_sections(st), build_md)], "build", st.round)
@@ -362,19 +409,18 @@ class Pipeline:
     def _build_sections(self, st):
         s = [("Spec", (self.dir / "spec.md").read_text())]
         if st.round > 1:
-            prev = self.round_dir(st.round - 1)
-            for name in ("verify.md", "test.md"):
-                f = prev / name
-                if f.exists():
-                    fr, _ = runners.read_artifact(f)
-                    if (fr or {}).get("verdict") == "FAIL":
-                        s.append((f"Previous round: {name}", f.read_text()))
-            for f in sorted(prev.glob("review-*.md")):
-                fr, _ = runners.read_artifact(f)
-                if (fr or {}).get("verdict") == "CHANGES":
-                    s.append((f"Previous round: {f.stem}", f.read_text()))
-            if (prev / "build.md").exists():
-                s.append(("Your previous build notes", (prev / "build.md").read_text()))
+            f = self.round_dir(st.round - 1) / "verify.md"
+            fr, _ = runners.read_artifact(f)
+            if (fr or {}).get("verdict") == "FAIL":
+                s.append(("Previous round: verify.md", f.read_text()))
+            mine = thread.brief(self.dir, "builder", self.cfg.v("review.severity.nits_block"))
+            if mine:
+                s.append(("Open threads addressed to you", mine))
+        if st.final:
+            s.append(("This is the final exchange", "A human ruled on the open issues (see the feedback below). "
+                                                    "Apply it; it closes them."))
+        elif st.x >= 1:
+            s.append(("This is an exchange", self._exchange_note(st)))
         fb = self.round_dir(st.round) / "feedback.md"
         if fb.exists():
             s.append(("Human feedback for this round", fb.read_text()))
@@ -383,69 +429,89 @@ class Pipeline:
     # verify
     def do_verify(self, st):
         rd = self.round_dir(st.round)
+        self.ingest(st.round)                 # the builder's comments, before the tester's brief is written
         vpath = rd / "verify.md"
         if not vpath.exists():
             ok = runners.verify(self.cfg, self.wt, vpath)
             self.ev("verdict", step="verify", round=st.round, verdict="PASS" if ok else "FAIL")
-            if not ok:
-                return self.new_round("verify failed", "verify")
         else:
             fr, _ = runners.read_artifact(vpath)
-            if fr.get("verdict") != "PASS":
-                return self.new_round("verify failed", "verify")
+            ok = fr.get("verdict") == "PASS"
+        if not ok:
+            if st.final:
+                return self.needs_human("ruling", "verify", "verify failed after the human's ruling was applied")
+            return self.fix_cycle("verify failed", "verify")
         tpath = rd / "test.md"
+        asked = bool(thread.awaiting(self.dir, "tester"))
+        if not tpath.exists() and not (st.x == 0 or st.final or asked):
+            self.ev("stage", stage="review")          # an exchange: the tester only joins if it has an open issue
+            return None
         if not tpath.exists():
             sections = [("Spec", (self.dir / "spec.md").read_text()),
                         ("Test paths you may write", ", ".join(self.cfg.v("test.scope.paths"))),
                         ("Test command", self.cfg.command("test") or "(none configured)")]
-            prev = self.round_dir(st.round - 1) / "test.md"
-            if prev.exists():
-                sections.append(("Your previous test report", prev.read_text()))
-            disputes = _section((rd / "build.md").read_text(), "Disputes")
-            if disputes:
-                sections.append(("Builder disputes (decide: withdraw or keep)", disputes))
+            mine = thread.brief(self.dir, "tester", True)
+            if mine:
+                sections.append(("Open threads addressed to you", mine))
+            if st.x >= 1:
+                sections.append(("This is an exchange", self._exchange_note(st)))
             return self.spawn([(f"test-r{st.round}", AGENT_FOR["test"], "tester", {}, sections, tpath)],
                               "verify", st.round)
         fr, tbody = runners.read_artifact(tpath)
         self.ev("verdict", step="test", round=st.round, verdict=fr.get("verdict"))
-        if fr.get("verdict") != "PASS":
-            held = self.upheld(rd, {"tester": (fr, tbody)})
-            if held:
-                return self.needs_human("stalemate", "verify", held)
-            return self.new_round("tests failed", "verify")
+        act = self.route(st, "verify")
+        if act:
+            return act
+        if st.final and fr.get("verdict") != "PASS":
+            return self.needs_human("ruling", "verify", "the tests fail after the human's ruling was applied")
         self.ev("stage", stage="review")
         return None
 
     # review
     def do_review(self, st):
-        res = self.review_step("review", st.round, self.round_dir(st.round))
-        if res is None:
-            self.ev("stage", stage="merge")
-            return None
-        if isinstance(res, dict):
-            return res
-        rd = self.round_dir(st.round)
-        held = self.upheld(rd, {n: runners.read_artifact(rd / f"review-{n}.md") for n in res})
-        if held:
-            return self.needs_human("stalemate", "review", held)
-        return self.new_round("review: " + ", ".join(res), "review")
+        self.ingest(st.round)
+        if not st.final:                      # a human's ruling is the last word: no further review
+            res = self.review_step("review", st.round, self.round_dir(st.round))
+            if isinstance(res, dict):
+                return res
+        act = self.route(st, "review")
+        if act:
+            return act
+        return self.end_of_cycle(st, "review")
 
-    def upheld(self, rd, reports):
-        """A stalemate: the builder disputed a finding or test, and its checker kept it anyway.
-        reports: {name: (frontmatter, body)} of the checkers that still object. Returns the
-        explanation for the human, or "" when nobody is holding out against a dispute."""
-        build = (rd / "build.md").read_text() if (rd / "build.md").exists() else ""
-        if not (_section(build, "Disputes") or re.search(r"\bdisputed\b", _section(build, "Responses"), re.I)):
-            return ""
-        out = []
-        for name, (fr, body) in reports.items():
-            n = (fr or {}).get("upheld")
-            if isinstance(n, int) and not isinstance(n, bool) and n > 0:
-                out.append(f"{name} kept {n} disputed item(s): "
-                           + (_section(body, "Upheld") or "see its report")[:400])
-        if not out:
-            return ""
-        return "The builder disputed; " + " | ".join(out) + f" | builder said: {(_section(build, 'Disputes') or _section(build, 'Responses'))[:400]}"
+    def _exchange_note(self, st):
+        return (f"Exchange {st.x} of {self.cfg.v('global.pipeline.max_exchanges')} in review round {st.r}. "
+                "Answer the threads addressed to you. Raise a new issue only if the fix itself broke something.")
+
+    # ------------------------------------------------------ conversation --
+    def known_to(self):
+        return {"builder", "tester", "spec-writer", "director"} | {f"{n}-reviewer" for n in self.cfg.reviewers}
+
+    def ingest(self, rnd, merge=False):
+        r, x, _ = self.state().cycles.get(rnd, (1, 0, False))
+        advisory = {f"{n}-reviewer" for n, s in self.cfg.reviewers.items() if s.get("blocking") is False}
+        thread.ingest(self.dir, self.round_dir(rnd), rnd, self.known_to(), r=r,
+                      exchange=x >= 1 and not merge, advisory=advisory)
+        thread.write_view(self.dir)
+
+    def route(self, st, step):
+        """Record the round's comments, then act on them: ask the spec-writer to rule on an issue
+        addressed to it, or stop for a human when the director sent an issue there."""
+        self.ingest(st.round)
+        rd = self.round_dir(st.round)
+        asked = thread.awaiting(self.dir, "spec-writer")
+        if asked and not (rd / "spec-ruling.md").exists():
+            sections = [("Spec", (self.dir / "spec.md").read_text()),
+                        ("Issues to rule on", thread.brief(self.dir, "spec-writer", True)),
+                        ("What to do", "Do not edit the spec. For each issue write one comment, "
+                                       "`<id> -> director, ruling: keep|change: <reason>`. `keep` means "
+                                       "the spec stands and the work is right; `change` means the spec "
+                                       "should be different.")]
+            return self.spawn([(f"spec-ruling-r{st.round}", AGENT_FOR["spec"], "spec-writer",
+                                {"mode": "ruling"}, sections, rd / "spec-ruling.md")], step, st.round)
+        if thread.awaiting_human(self.dir):
+            return self.needs_human("stalemate", step, thread.human_detail(self.dir))
+        return None
 
     def review_step(self, step, rnd, folder):
         """Run a step's reviewers. Returns None (all clear), a list of blocking reviewers
@@ -498,10 +564,17 @@ class Pipeline:
                                      f"Run `git diff {base_ref}...HEAD` in {self.wt}."))
                     build = self.round_dir(rnd) / "build.md"
                     if build.exists():
-                        sections.append(("Builder notes (including any disputes)", build.read_text()))
-                prev = folder.parent / (f"r{rnd - 1}" if step == "spec" else f"round-{rnd - 1}") / out.name
-                if prev.exists():
-                    sections.append(("Your previous review", prev.read_text()))
+                        notes = thread.trim(build.read_text(), ("Deviations",))
+                        sections.append((f"Builder notes (full file: {build})", notes or "(none)"))
+                    mine = thread.brief(self.dir, f"{name}-reviewer", True)
+                    if mine:
+                        sections.append(("Open threads addressed to you", mine))
+                    if st.x >= 1 and step == "review":
+                        sections.append(("This is an exchange", self._exchange_note(st)))
+                elif rnd > 1:
+                    prev = folder.parent / f"r{rnd - 1}" / out.name
+                    if prev.exists():
+                        sections.append(("Your previous review", prev.read_text()))
                 spawns.append((f"{step}-{name}-r{rnd}", agent, "reviewer",
                                {"reviewer": name, "blocking": spec.get("blocking", True),
                                 **({"model": spec["model"]} if spec.get("model") else {}),
@@ -523,9 +596,14 @@ class Pipeline:
     def select(self, step, rnd, reviewers):
         ctx = self.rule_ctx(step)
         st = self.state()
-        prev = st.selected.get((step, rnd - 1)) if rnd > 1 else None
+        exchange = step == "review" and st.x >= 1            # only reviewers with an open thread join
+        prev = st.selected.get((step, rnd - 1)) if rnd > 1 and step != "review" else None
         sel, conditions = {}, {}
         for name, spec in reviewers.items():
+            if exchange:
+                has = bool(thread.awaiting(self.dir, f"{name}-reviewer"))
+                sel[name] = {"selected": has, "reason": "open thread" if has else "nothing open for it"}
+                continue
             if prev is not None and step != "spec":
                 # later rounds: only reviewers that asked for changes, plus `code`
                 was = prev.get(name, {}).get("selected")
@@ -575,7 +653,8 @@ class Pipeline:
         if isinstance(res, dict):
             return res
         if res:
-            return self.new_round("merge review: " + ", ".join(res), "merge")
+            self.ingest(st.round, merge=True)
+            return self.fix_cycle("merge review: " + ", ".join(res), "merge")
         if self.host.has_prs:
             if not self.meta.get("pr"):
                 body = rd / "pr-body.md"
@@ -594,7 +673,7 @@ class Pipeline:
                 if status["ci"] == "pending":
                     return self._wait("waiting for CI", f"PR {self.meta['pr']}", waiter=self.waiter("ci"))
                 if status["ci"] == "fail":
-                    return self.new_round("CI failed", "merge")
+                    return self.fix_cycle("CI failed", "merge")
         if not st.skip_rules:
             problems = self.rule_check(st)
             if problems:
@@ -608,7 +687,7 @@ class Pipeline:
             if status["behind"]:
                 r = self.host.call("update_branch", branch=self.meta["branch"])
                 if r.get("conflict"):
-                    return self.new_round("merge conflict with " + self.base, "merge")
+                    return self.fix_cycle("merge conflict with " + self.base, "merge")
                 return self._wait("branch updated; waiting for CI", self.meta["pr"], waiter=self.waiter("ci"))
             r = self.host.call("merge", branch=self.meta["branch"], strategy=self.cfg.v("release.merge.strategy"),
                                message=self.merge_message(), delete_branch=self.cfg.v("release.merge.delete_branch"))
@@ -624,13 +703,13 @@ class Pipeline:
                                             f"/sdlc:approve {self.job_id} merge")
         r = self.host.call("update_branch", worktree=str(self.wt), base=self.base)
         if r.get("conflict"):
-            return self.new_round("rebase conflict with " + self.base, "merge")
+            return self.fix_cycle("rebase conflict with " + self.base, "merge")
         if not r.get("updated") and "up to date" not in r.get("reason", ""):
             return self.needs_human("adapter", "merge", "rebase failed: " + r.get("reason", ""))
         final = rd / "verify-final.md"
         if not final.exists() and not runners.verify(self.cfg, self.wt, final):
             final.rename(rd / "verify-final-failed.md")
-            return self.new_round("verify failed after rebase", "merge")
+            return self.fix_cycle("verify failed after rebase", "merge")
         r = self.host.call("merge", branch=self.meta["branch"], base=self.base,
                            strategy=self.cfg.v("release.merge.strategy"),
                            message=self.merge_message())
@@ -645,11 +724,13 @@ class Pipeline:
         protected = [p for p in changed for g in self.cfg.v("global.guardrail.protected_paths") if rules.glob_match(g, p)]
         if protected:
             problems.append("protected paths changed: " + ", ".join(sorted(set(protected))))
-        rd = self.round_dir(st.round)
-        for name in ("verify.md", "test.md"):
-            fr, _ = runners.read_artifact(rd / name)
-            if (fr or {}).get("verdict") != "PASS":
-                problems.append(f"{name} is not PASS")
+        fr, _ = runners.read_artifact(self.round_dir(st.round) / "verify.md")
+        if (fr or {}).get("verdict") != "PASS":
+            problems.append("verify.md is not PASS")
+        left = [i["id"] for i in thread.load(self.dir)[0].values()
+                if i["state"] in ("open", "human") and (i["severity"] == "blocking" or self.cfg.v("review.severity.nits_block"))]
+        if left:
+            problems.append("issues still open: " + ", ".join(left))
         return problems
 
     def gate_is_human(self, gate):
@@ -693,9 +774,7 @@ class Pipeline:
                 "decision": str(self.dir / "decision.md")}
 
 
-def _section(md, title):
-    m = re.search(rf"^##\s+{re.escape(title)}\s*$(.*?)(?=^##\s|\Z)", md or "", flags=re.M | re.S)
-    return m.group(1).strip() if m else ""
+_section = thread.section
 
 
 # ----------------------------------------------------------- human actions --
@@ -721,7 +800,8 @@ def approve(cfg, job_id, gate, value=None, by=None):
         p.ev("override", step="spec", reason="accepted spec after max revisions", by=by)
         p.ev("resume", by=by)
         p.ev("gate", gate="spec", status="approved", by=by)
-    elif reason in ("max-rounds", "rules", "stalemate"):
+    elif reason in ("exchanges", "ruling", "rules", "stalemate"):
+        thread.human_decision(p.dir, "override", value or "", by)
         p.ev("override", step=nh.get("step"), reason=f"{reason}: {nh.get('detail', '')}", by=by,
              skip_rules=True)
         p.ev("resume", by=by)
@@ -747,18 +827,24 @@ def cancel(cfg, job_id):
     p.link_session(closing=True)
 
 
-def rework(cfg, job_id, feedback):
+def rework(cfg, job_id, feedback, spec=False):
+    """The human's ruling, the final exchange. It reopens the issues waiting on the human (a later
+    close is automatic) and starts a builder cycle with the ruling; with `spec`, the spec-writer
+    changes the spec first and the builder then builds it."""
     p = Pipeline(cfg, job_id)
     st = p.state()
-    n = st.round + 1
-    p.round_dir(n).mkdir(parents=True, exist_ok=True)
-    (p.round_dir(n) / "feedback.md").write_text(feedback.strip() + "\n")
+    thread.human_decision(p.dir, "rework", feedback)
     if st.needs_human:
         p.ev("resume", by="rework")
-    p.ev("round", n=n, auto=False, reason="rework", step="human")
-    p.ev("stage", stage="build")
     p.ev("learning_candidate", source="rework", text=feedback.strip())
-    return f"job {job_id}: round {n} started with your feedback"
+    if spec:
+        (p.dir / "ruling.md").write_text(feedback.strip() + "\n")
+        p.ev("spec_rev", n=st.spec_rev + 1, counts=False, ruling=True, reason="human ruling")
+        p.ev("stage", stage="spec")
+        return f"job {job_id}: the spec-writer will change the spec, then the builder rebuilds"
+    p.cycle(st, "rework", "human", x=st.x + 1, final=True)
+    (p.round_dir(st.round + 1) / "feedback.md").write_text(feedback.strip() + "\n")
+    return f"job {job_id}: cycle {st.round + 1} started with your feedback"
 
 
 def report_answers(cfg, job_id, answers_text):

@@ -19,7 +19,14 @@
        "path": "global.pipeline.max_rounds",
        "type": "int",
        "min": 1,
-       "help": "A round is one pass of build, verify and review: the builder changes the code, then the tests and reviewers respond. After this many rounds without a clean review, a person decides."
+       "help": "A round is a full review pass: the tests and reviewers raise issues, then the builder and checkers work through them. After a round that raised issues, the code is reviewed again, up to this many rounds."
+      },
+      {
+       "path": "global.pipeline.max_exchanges",
+       "type": "int",
+       "min": 1,
+       "max": 5,
+       "help": "How many times the builder and a checker may answer each other on an issue within a round. Issues still open after that go to a person."
       },
       {
        "path": "global.pipeline.critical_thinking",

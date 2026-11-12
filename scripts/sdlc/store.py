@@ -72,7 +72,7 @@ def slug(text, n=40):
 
 def alert_for(e):
     """The alert an event raises, or None. There is one kind of "a person must act" alert, `human`
-    (a decision, a failure or an error); the rest are information: budget warning, done."""
+    (a decision, a failure or an error); the other is information: a budget warning."""
     t = e.get("type")
     if t == "needs_human":
         kind, text = "human", f"Human required ({e.get('reason')}): {e.get('detail', '')}".strip()
@@ -82,8 +82,6 @@ def alert_for(e):
         kind, text = "human", f"Human required (error in {e.get('stage', 'pipeline')}): {e.get('detail', '')}"
     elif t == "budget" and e.get("level") == "warn":
         kind, text = "budget-warning", f"Budget warning ({e.get('scope')}): {e.get('used'):,} of {e.get('limit'):,} tokens"
-    elif t == "stage" and e.get("stage") == "done":
-        kind, text = "done", "Job is done and merged"
     else:
         return None
     return {"id": hashlib.sha1(f"{e.get('ts')}{kind}{text}".encode()).hexdigest()[:8],

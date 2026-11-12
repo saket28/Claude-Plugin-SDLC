@@ -27,9 +27,13 @@ round: <round from the brief>
 ## Changes
 ## Acceptance criteria   (AC-n → where it's implemented and how you checked it)
 ## Deviations            (anything that differs from the spec, and why)
-## Responses             (later rounds: each Important finding → fixed, or disputed (reason))
-## Disputes              (findings or tests you believe are wrong, with evidence; empty if none)
+## Comments              (later rounds: answer each thread addressed to you, see below)
 ## Learning candidates   (optional: what a future job should know)
 ```
+
+Comments: your brief lists the threads addressed to you, each with an id (`I3`) and who said what. Answer
+each in one line: `I3 -> code-reviewer, fixed: what you changed` or `I3 -> code-reviewer, pushback: why it is
+wrong, with evidence` (address the checker named in the thread). If your pushback rests on the spec,
+say which AC. Push back only with evidence; fix the rest.
 
 Reply with one line: the path of the report you wrote.

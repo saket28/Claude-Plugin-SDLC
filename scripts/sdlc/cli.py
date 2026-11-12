@@ -165,7 +165,7 @@ def cmd_approve(a):
 
 
 def cmd_rework(a):
-    out(pipeline.rework(load(), a.job, " ".join(a.feedback)))
+    out(pipeline.rework(load(), a.job, " ".join(a.feedback), spec=a.spec))
 
 
 def cmd_cancel(a):
@@ -369,6 +369,7 @@ def main(argv=None):
     p = sub.add_parser("approve"); p.add_argument("job"); p.add_argument("gate", nargs="?")
     p.add_argument("value", nargs="*"); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("rework"); p.add_argument("job"); p.add_argument("feedback", nargs="+")
+    p.add_argument("--spec", action="store_true", help="the ruling changes the spec: the spec-writer revises it first")
     p.set_defaults(fn=cmd_rework)
     p = sub.add_parser("cancel"); p.add_argument("job"); p.set_defaults(fn=cmd_cancel)
     p = sub.add_parser("status"); p.add_argument("job", nargs="?"); p.add_argument("--check", action="store_true")

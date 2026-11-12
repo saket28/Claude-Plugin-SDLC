@@ -22,7 +22,7 @@ Status: **v0.1, in development.** See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the
 | `/sdlc:start [id \| text]` | Start the next backlog item, a backlog card by its number, a new feature, or continue a job |
 | `/sdlc:status [id] [--check]` | Jobs, stages, tokens, and anything waiting on you; `--check` runs a health check |
 | `/sdlc:approve <id> <gate>` | Pass a gate: `spec`, `merge`, `budget +500k`, `override`, `retry` |
-| `/sdlc:rework <id> "<feedback>"` | Send a job back to the builder with your feedback |
+| `/sdlc:rework <id> [--spec] "<ruling>"` | Give your ruling on the open issues: the builder applies it (with `--spec`, the spec-writer changes the spec first) |
 | `/sdlc:cancel <id>` | Cancel a job, keeping its record |
 | `/sdlc:review [names] [--base b]` | Run the named reviewers (default all) on the current branch; one consolidated report |
 | `/sdlc:dashboard` | Open the local dashboard (board, timelines, tokens, settings, help) |
